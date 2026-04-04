@@ -12,8 +12,16 @@ from sanjaya.tracing import Tracer, get_tracer
 
 from .llm import VideoLLMClient
 from .video_models import VideoAnswer, VideoQuery
-from .video_prompts import VIDEO_DEFAULT_QUERY, build_video_system_prompt, next_video_action_prompt
+from .video_prompts import (
+    VIDEO_DEFAULT_QUERY,
+    VideoMeta,
+    build_video_system_prompt,
+    format_transcript_block,
+    next_video_action_prompt,
+)
 from .video_repl import VideoExecutionResult, VideoMontyREPL
+from .video_tools.media import video_duration_seconds
+from .video_tools.retrieval import load_subtitle_segments
 from .video_tools.transcription import ensure_subtitle_sidecar
 from .video_utils import (
     build_video_answer,
@@ -36,11 +44,13 @@ class VideoRLM_REPL:
         recursive_model: str = "openrouter:openai/gpt-4.1-mini",
         recursive_fallback_model: str = "openrouter:vikhyatk/moondream2",
         max_iterations: int = 20,
+        force_all_iterations: bool = False,
     ):
         self.model = model
         self.recursive_model = recursive_model
         self.recursive_fallback_model = recursive_fallback_model
         self.max_iterations = max_iterations
+        self.force_all_iterations = force_all_iterations
         self.llm = VideoLLMClient(model=model)
 
         # Shared tracer with in-memory event tracking for workspace persistence
@@ -97,7 +107,35 @@ class VideoRLM_REPL:
             question=resolved_question,
             subtitle_path=subtitle_result.subtitle_path,
         )
-        self.messages = build_video_system_prompt()
+
+        # Build video metadata + transcript for the system prompt
+        video_meta: VideoMeta | None = None
+        try:
+            duration_s = video_duration_seconds(str(video))
+            segments: list[dict] = []
+            if subtitle_result.subtitle_path:
+                raw_segs = load_subtitle_segments(subtitle_result.subtitle_path)
+                segments = [
+                    {"start": s.start_s, "end": s.end_s, "text": s.text}
+                    for s in raw_segs
+                ]
+            if segments:
+                transcript_text = format_transcript_block(segments)
+                video_meta = VideoMeta(
+                    duration_s=duration_s,
+                    segment_count=len(segments),
+                    transcript_text=transcript_text,
+                )
+                _console.print(
+                    f"[cyan]🧩 Phase: setup[/] Transcript loaded: "
+                    f"{len(segments)} segments, {len(transcript_text):,} chars"
+                )
+            else:
+                _console.print("[yellow]🧩 Phase: setup[/] No transcript segments available for prompt")
+        except Exception as exc:
+            _console.print(f"[yellow]🧩 Phase: setup[/] Could not load video meta: {exc}")
+
+        self.messages = build_video_system_prompt(video_meta=video_meta)
         self.run_id = compute_video_run_id(str(video))
         _console.print(f"[cyan]🧩 Phase: setup[/] run_id={self.run_id}")
         self.repl = VideoMontyREPL(
@@ -361,7 +399,7 @@ class VideoRLM_REPL:
                             iter_ctx.record(iteration_status="final_answer")
                             answer = self._build_answer(final_answer)
                             completion_ctx.record(completion_status="final_answer")
-                            completion_ctx.record_final_answer(str(answer.answer)[:500], forced=False)
+                            completion_ctx.record_final_answer(str(answer.answer), forced=False)
                             self.repl.persist_trace_events()
                             return answer
                         else:
@@ -375,7 +413,7 @@ class VideoRLM_REPL:
                 forced_answer = self.llm.completion(forced_messages)
                 answer = self._build_answer(forced_answer)
                 completion_ctx.record(completion_status="forced_final_answer")
-                completion_ctx.record_final_answer(str(answer.answer)[:500], forced=True)
+                completion_ctx.record_final_answer(str(answer.answer), forced=True)
                 self.repl.persist_trace_events()
                 return answer
             except KeyboardInterrupt as exc:
