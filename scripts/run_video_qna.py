@@ -56,11 +56,11 @@ def main() -> None:
     parser.add_argument(
         "--subtitle-mode",
         choices=["auto", "local", "api", "none"],
-        default="auto",
+        default="none",
         help="How to resolve subtitles when sidecar is missing",
     )
     parser.add_argument("--subtitle-local-model", default="base", help="Local whisper model name")
-    parser.add_argument("--subtitle-api-model", default="whisper-1", help="API transcription model")
+    parser.add_argument("--subtitle-api-model", default="gpt-4o-transcribe-diarize", help="API transcription model")
     parser.add_argument("--max-iterations", type=int, default=8)
     parser.add_argument("--format", choices=["json", "markdown"], default="json")
     args = parser.parse_args()

@@ -59,9 +59,9 @@ class VideoRLM_REPL:
         question: str,
         subtitle_path: str | None = None,
         *,
-        subtitle_mode: str = "auto",
+        subtitle_mode: str = "none",
         subtitle_local_model: str = "base",
-        subtitle_api_model: str = "whisper-1",
+        subtitle_api_model: str = "gpt-4o-transcribe-diarize",
     ) -> None:
         """Initialize messages and REPL context for a video question."""
         video = Path(video_path)
@@ -246,9 +246,9 @@ class VideoRLM_REPL:
         question: str,
         subtitle_path: str | None = None,
         *,
-        subtitle_mode: str = "auto",
+        subtitle_mode: str = "none",
         subtitle_local_model: str = "base",
-        subtitle_api_model: str = "whisper-1",
+        subtitle_api_model: str = "gpt-4o-transcribe-diarize",
     ) -> VideoAnswer:
         """Run recursive orchestration and return a structured answer payload."""
         self.setup_query(

@@ -123,3 +123,11 @@ uv.lock
 # Project specific
 baml_client/
 data/
+
+# UI
+ui/node_modules/
+ui/.next/
+ui/out/
+
+# API
+api/.venv/

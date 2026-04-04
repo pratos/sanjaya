@@ -34,11 +34,13 @@ def _normalize_segments(raw_segments: list[Any]) -> list[dict[str, Any]]:
         start = getattr(segment, "start", None)
         end = getattr(segment, "end", None)
         text = getattr(segment, "text", None)
+        speaker = getattr(segment, "speaker", None)
 
         if isinstance(segment, dict):
             start = segment.get("start", start)
             end = segment.get("end", end)
             text = segment.get("text", text)
+            speaker = segment.get("speaker", speaker)
 
         try:
             start_s = float(start)
@@ -49,13 +51,15 @@ def _normalize_segments(raw_segments: list[Any]) -> list[dict[str, Any]]:
         if end_s <= start_s:
             continue
 
-        normalized.append(
-            {
-                "start": round(start_s, 3),
-                "end": round(end_s, 3),
-                "text": str(text or "").strip(),
-            }
-        )
+        entry: dict[str, Any] = {
+            "start": round(start_s, 3),
+            "end": round(end_s, 3),
+            "text": str(text or "").strip(),
+        }
+        if speaker is not None:
+            entry["speaker"] = str(speaker)
+
+        normalized.append(entry)
 
     return normalized
 
@@ -131,15 +135,29 @@ def transcribe_with_whisper_local(
         )
 
 
+def _is_diarize_model(model: str) -> bool:
+    """Check if the model is a diarization model (different API contract)."""
+    return "diarize" in model.lower()
+
+
+def _is_gpt_transcribe_model(model: str) -> bool:
+    """Check if model is a gpt-4o-transcribe variant (no verbose_json support)."""
+    return model.startswith("gpt-4o") and "transcribe" in model.lower()
+
+
 def transcribe_with_openai_api(
     *,
     video_path: str,
     output_path: str,
-    model: str = "whisper-1",
+    model: str = "gpt-4o-transcribe-diarize",
     language: str = "en",
     api_key: str | None = None,
 ) -> str:
-    """Generate subtitle JSON using OpenAI transcription API with segment timestamps."""
+    """Generate subtitle JSON using OpenAI transcription API with segment timestamps.
+
+    Supports whisper-1, gpt-4o-transcribe, gpt-4o-mini-transcribe,
+    and gpt-4o-transcribe-diarize models.
+    """
     src = Path(video_path)
     if not src.exists():
         raise FileNotFoundError(f"Video not found: {src}")
@@ -155,14 +173,28 @@ def transcribe_with_openai_api(
 
     client = OpenAI(api_key=key)
 
+    # Build request kwargs based on model capabilities
+    create_kwargs: dict[str, Any] = {
+        "model": model,
+        "language": language,
+    }
+
+    if _is_diarize_model(model):
+        # gpt-4o-transcribe-diarize: no response_format, no timestamp_granularities
+        # chunking_strategy="auto" required for inputs >30s
+        create_kwargs["chunking_strategy"] = "auto"
+    elif _is_gpt_transcribe_model(model):
+        # gpt-4o-transcribe / gpt-4o-mini-transcribe: supports json but not verbose_json
+        create_kwargs["response_format"] = "verbose_json"
+        create_kwargs["timestamp_granularities"] = ["segment"]
+    else:
+        # whisper-1
+        create_kwargs["response_format"] = "verbose_json"
+        create_kwargs["timestamp_granularities"] = ["segment"]
+
     with src.open("rb") as audio_file:
-        response = client.audio.transcriptions.create(
-            model=model,
-            file=audio_file,
-            language=language,
-            response_format="verbose_json",
-            timestamp_granularities=["segment"],
-        )
+        create_kwargs["file"] = audio_file
+        response = client.audio.transcriptions.create(**create_kwargs)
 
     raw_segments = getattr(response, "segments", None)
     if raw_segments is None and isinstance(response, dict):
@@ -192,7 +224,7 @@ def ensure_subtitle_sidecar(
     mode: str = "auto",
     output_dir: str = "data/longvideobench/meta",
     local_model: str = "base",
-    api_model: str = "whisper-1",
+    api_model: str = "gpt-4o-transcribe-diarize",
     language: str = "en",
 ) -> SubtitlePreparationResult:
     """Find or generate subtitle sidecar using local or API transcription."""

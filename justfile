@@ -4,7 +4,7 @@ set shell := ["bash", "-cu"]
 video-qna \
   video="data/longvideobench/videos/7F9IrtSHmc0.mp4" \
   question="In a room with a wall tiger and a map on the wall, what is the man doing?" \
-  subtitle_mode="auto" \
+  subtitle_mode="none" \
   format="markdown" \
   subtitle_api_model="whisper-1":
 	uv run python -u scripts/run_video_qna.py \
