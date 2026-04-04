@@ -1,5 +1,9 @@
 set shell := ["bash", "-cu"]
 
+# Start API + UI together via Overmind.
+dev:
+	overmind start
+
 # Run VideoRLM on a local sample video (override args as needed).
 video-qna \
   video="data/longvideobench/videos/7F9IrtSHmc0.mp4" \
