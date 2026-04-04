@@ -1,0 +1,47 @@
+[project]
+name = "video-rlm"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "camoufox[geoip]>=0.4.11",
+    "jupyter>=1.1.1",
+    "logfire",
+    "loguru>=0.7.3",
+    "parallel-web>=0.4.2",
+    "pydantic-ai>=0.2.0",
+    "pydantic-monty>=0.0.9",
+    "pymupdf>=1.27.2.2",
+    "python-docx>=1.1.0",
+    "python-dotenv>=1.1.0",
+    "rich>=14.0.0",
+]
+
+[build-system]
+requires = ["setuptools>=78"]
+build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["F", "I"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 18
+
+[tool.pyright]
+include = ["src"]
+exclude = ["temp"]
+ignore = []
+defineConstant = { DEBUG = false }
+
+reportMissingImports = "error"
+reportMissingTypeStubs = false
+
+pythonVersion = "3.12"
+pythonPlatform = "Linux"
+
+[tool.setuptools.packages.find]
+where = ["src"]
