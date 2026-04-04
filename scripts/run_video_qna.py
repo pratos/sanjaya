@@ -60,22 +60,34 @@ def main() -> None:
         help="How to resolve subtitles when sidecar is missing",
     )
     parser.add_argument("--subtitle-local-model", default="base", help="Local whisper model name")
-    parser.add_argument("--subtitle-api-model", default="gpt-4o-mini-transcribe", help="API transcription model")
+    parser.add_argument("--subtitle-api-model", default="whisper-1", help="API transcription model")
     parser.add_argument("--max-iterations", type=int, default=8)
     parser.add_argument("--format", choices=["json", "markdown"], default="json")
     args = parser.parse_args()
 
-    repl = VideoRLM_REPL(max_iterations=args.max_iterations)
-    answer = repl.completion(
-        video_path=args.video,
-        question=args.question,
-        subtitle_path=args.subtitle,
-        subtitle_mode=args.subtitle_mode,
-        subtitle_local_model=args.subtitle_local_model,
-        subtitle_api_model=args.subtitle_api_model,
+    print(
+        "[video-qna] starting"
+        f" video={args.video} subtitle_mode={args.subtitle_mode} format={args.format}",
+        file=sys.stderr,
     )
 
+    repl = VideoRLM_REPL(max_iterations=args.max_iterations)
+
+    try:
+        answer = repl.completion(
+            video_path=args.video,
+            question=args.question,
+            subtitle_path=args.subtitle,
+            subtitle_mode=args.subtitle_mode,
+            subtitle_local_model=args.subtitle_local_model,
+            subtitle_api_model=args.subtitle_api_model,
+        )
+    except KeyboardInterrupt:
+        print("Interrupted by user. Exiting gracefully.", file=sys.stderr)
+        raise SystemExit(130)
+
     payload = answer.model_dump()
+    print("[video-qna] completed", file=sys.stderr)
     if args.format == "json":
         print(json.dumps(payload, indent=2))
     else:

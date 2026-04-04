@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "camoufox[geoip]>=0.4.11",
+    "genai-prices>=0.0.56",
     "jupyter>=1.1.1",
     "logfire",
     "loguru>=0.7.3",

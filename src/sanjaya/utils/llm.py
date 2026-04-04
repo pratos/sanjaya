@@ -77,7 +77,7 @@ class LLMClient:
             if key:
                 os.environ["ANTHROPIC_API_KEY"] = key
 
-    def _run_agent(self, model: str, prompt: str) -> tuple[str, Any]:
+    def _run_agent(self, model: str, prompt: Any) -> tuple[str, Any]:
         agent = Agent(model=model, output_type=str, retries=1, defer_model_check=True)
         result = agent.run_sync(prompt)
         response = result.output if hasattr(result, "output") else str(result)
@@ -160,9 +160,8 @@ class LLMClient:
 
         return metadata
 
-    def completion(self, prompt_or_messages: Any, timeout: int | None = None) -> str:
+    def _completion_with_payload(self, payload: Any, timeout: int | None = None) -> str:
         _ = timeout  # Reserved for future provider-specific timeout support
-        prompt = self._as_prompt(prompt_or_messages)
 
         start = time.time()
         self.last_usage = None
@@ -177,7 +176,7 @@ class LLMClient:
 
         # Primary call
         try:
-            response, result = self._run_agent(self.model, prompt)
+            response, result = self._run_agent(self.model, payload)
             self._capture_usage(result)
             result_metadata = self._capture_result_metadata(result)
             self.last_call_metadata.update(
@@ -195,7 +194,7 @@ class LLMClient:
             self.last_call_metadata["primary_error"] = str(primary_err)
 
         # Fallback call (single level, same provider)
-        response, result = self._run_agent(self.fallback_model, prompt)
+        response, result = self._run_agent(self.fallback_model, payload)
         self._capture_usage(result)
         result_metadata = self._capture_result_metadata(result)
         self.last_call_metadata.update(
@@ -208,3 +207,11 @@ class LLMClient:
             }
         )
         return response
+
+    def completion(self, prompt_or_messages: Any, timeout: int | None = None) -> str:
+        prompt = self._as_prompt(prompt_or_messages)
+        return self._completion_with_payload(prompt, timeout=timeout)
+
+    def completion_with_user_content(self, user_content: Any, timeout: int | None = None) -> str:
+        """Run a completion with raw user content (e.g., BinaryContent attachments)."""
+        return self._completion_with_payload(user_content, timeout=timeout)

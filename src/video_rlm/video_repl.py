@@ -9,8 +9,9 @@ from typing import Any, Callable
 from pydantic_monty import MontyRepl
 from rich.console import Console
 
+from sanjaya.tracing import Tracer, get_tracer
+
 from .llm import VideoLLMClient
-from .tracing import VideoTracer
 from .video_models import CandidateWindow, ClipArtifact, VideoQuery
 from .video_tools.media import MediaToolError, extract_clip, sample_frames, video_duration_seconds
 from .video_tools.monty_mount import WorkspaceMount
@@ -42,6 +43,7 @@ class VideoMontyREPL:
         context: Any = None,
         workspace_base_dir: str = "data/longvideobench/artifacts",
         run_id: str | None = None,
+        tracer: Tracer | None = None,
     ):
         self.repl = MontyRepl()
         self.sub_llm = VideoLLMClient(
@@ -50,10 +52,11 @@ class VideoMontyREPL:
             fallback_model=recursive_fallback_model,
         )
         self.context = context
+        self.run_id = run_id
 
         self.workspace = ArtifactWorkspace(base_dir=workspace_base_dir)
         self.mount = WorkspaceMount(str(self.workspace.run_dir))
-        self.tracer = VideoTracer(run_id=run_id)
+        self.tracer: Tracer = tracer or get_tracer()
 
         self._external_functions: dict[str, Callable[..., Any]] = {}
         self._stdout_lines: list[str] = []
@@ -112,22 +115,34 @@ class VideoMontyREPL:
 
     def _llm_query(self, prompt: str) -> str:
         _console.print(f"[magenta]🤖 llm_query called ({len(prompt)} chars)[/]")
-        response = self.sub_llm.completion(prompt, timeout=300)
-        self._llm_queries.append((prompt, response))
 
-        usage = self.sub_llm.last_usage
-        metadata = self.sub_llm.last_call_metadata or {}
-        self.tracer.record_sub_llm_call(
-            prompt=prompt,
-            response=response,
-            input_tokens=getattr(usage, "input_tokens", None),
-            output_tokens=getattr(usage, "output_tokens", None),
-            total_tokens=getattr(usage, "total_tokens", None),
-            cost_usd=metadata.get("cost_usd"),
-            model_used=metadata.get("model_used"),
-            provider=metadata.get("provider"),
-            duration_seconds=metadata.get("duration_seconds"),
-        )
+        with self.tracer.video_sub_llm_call(
+            model=self.sub_llm.text_client.model,
+            context=prompt,
+            run_id=self.run_id,
+        ) as t:
+            response = self.sub_llm.completion(prompt, timeout=300)
+            self._llm_queries.append((prompt, response))
+
+            usage = self.sub_llm.last_usage
+            metadata = self.sub_llm.last_call_metadata or {}
+            t.record_response(response)
+            t.record_usage(
+                input_tokens=getattr(usage, "input_tokens", None),
+                output_tokens=getattr(usage, "output_tokens", None),
+            )
+            t.record(
+                total_tokens=getattr(usage, "total_tokens", None),
+                cost_usd=metadata.get("cost_usd"),
+                model_used=metadata.get("model_used"),
+                provider=metadata.get("provider"),
+                duration_seconds=metadata.get("duration_seconds"),
+            )
+            t.record_llm_cost(
+                input_tokens=getattr(usage, "input_tokens", None),
+                output_tokens=getattr(usage, "output_tokens", None),
+                model_name=metadata.get("model_used"),
+            )
         return response
 
     def _done(self, value: Any) -> Any:
@@ -146,39 +161,44 @@ class VideoMontyREPL:
         """Generate hybrid candidate windows from subtitle + sliding strategies."""
         query = self._active_query()
         effective_question = question or query.question
+        _console.print(
+            f"[blue]🔎 Phase: retrieval[/] Generating candidate windows (top_k={top_k}, window={window_size_s}s)"
+        )
 
-        duration_s = video_duration_seconds(query.video_path)
+        with self.tracer.video_retrieval(run_id=self.run_id) as t:
+            duration_s = video_duration_seconds(query.video_path)
 
-        subtitle_windows: list[CandidateWindow] = []
-        if query.subtitle_path:
-            subtitle_windows = subtitle_anchored_windows(
-                question=effective_question,
-                subtitle_path=query.subtitle_path,
+            subtitle_windows: list[CandidateWindow] = []
+            if query.subtitle_path:
+                subtitle_windows = subtitle_anchored_windows(
+                    question=effective_question,
+                    subtitle_path=query.subtitle_path,
+                    window_size_s=window_size_s,
+                    top_k=max(top_k, 12),
+                )
+
+            sliding = sliding_windows(
+                duration_s=duration_s,
                 window_size_s=window_size_s,
-                top_k=max(top_k, 12),
+                stride_s=stride_s,
             )
 
-        sliding = sliding_windows(
-            duration_s=duration_s,
-            window_size_s=window_size_s,
-            stride_s=stride_s,
-        )
+            merged = hybrid_merge(
+                subtitle_windows=subtitle_windows,
+                sliding=sliding,
+                top_k=top_k,
+            )
 
-        merged = hybrid_merge(
-            subtitle_windows=subtitle_windows,
-            sliding=sliding,
-            top_k=top_k,
-        )
-
-        self._candidate_windows = merged
-        self._candidate_by_id = {window.window_id: window for window in merged}
-        self.workspace.record_windows(merged)
-        self.tracer.record_retrieval(
-            subtitle_count=len(subtitle_windows),
-            sliding_count=len(sliding),
-            selected_count=len(merged),
-        )
-        self._refresh_mount()
+            self._candidate_windows = merged
+            self._candidate_by_id = {window.window_id: window for window in merged}
+            _console.print(f"[blue]🔎 Phase: retrieval[/] Selected {len(merged)} window(s)")
+            self.workspace.record_windows(merged)
+            t.record(
+                subtitle_count=len(subtitle_windows),
+                sliding_count=len(sliding),
+                selected_count=len(merged),
+            )
+            self._refresh_mount()
 
         return [window.model_dump() for window in merged]
 
@@ -201,32 +221,38 @@ class VideoMontyREPL:
             raise ValueError("extract_clip requires window_id or explicit start_s/end_s")
 
         resolved_clip_id = clip_id or window_id or f"clip-{len(self._clips) + 1}"
-        output_path = self.workspace.clip_path(resolved_clip_id)
-
-        clip_path = extract_clip(
-            video_path=query.video_path,
-            start_s=clip_start,
-            end_s=clip_end,
-            output_path=str(output_path),
+        _console.print(
+            f"[blue]🎞️ Phase: clip[/] Extracting {resolved_clip_id} ({clip_start:.1f}s-{clip_end:.1f}s)"
         )
 
-        artifact = ClipArtifact(
-            clip_id=resolved_clip_id,
-            clip_path=clip_path,
-            start_s=clip_start,
-            end_s=clip_end,
-            frame_paths=[],
-        )
-
-        self._clips[resolved_clip_id] = artifact
-        self.workspace.record_clip(artifact, window_id=window_id)
-        self.tracer.record_clip(
+        with self.tracer.video_clip_extraction(
             clip_id=resolved_clip_id,
             start_s=clip_start,
             end_s=clip_end,
-            clip_path=clip_path,
-        )
-        self._refresh_mount()
+            run_id=self.run_id,
+        ) as t:
+            output_path = self.workspace.clip_path(resolved_clip_id)
+
+            clip_path = extract_clip(
+                video_path=query.video_path,
+                start_s=clip_start,
+                end_s=clip_end,
+                output_path=str(output_path),
+            )
+
+            artifact = ClipArtifact(
+                clip_id=resolved_clip_id,
+                clip_path=clip_path,
+                start_s=clip_start,
+                end_s=clip_end,
+                frame_paths=[],
+            )
+
+            self._clips[resolved_clip_id] = artifact
+            self.workspace.record_clip(artifact, window_id=window_id)
+            t.record(clip_path=clip_path)
+            self._refresh_mount()
+
         return artifact.model_dump()
 
     def sample_frames(
@@ -251,25 +277,31 @@ class VideoMontyREPL:
             raise ValueError("sample_frames requires clip_id or clip_path")
 
         assert resolved_path is not None
-        duration = video_duration_seconds(resolved_path)
-        frame_dir = self.workspace.frame_dir(resolved_clip_id)
+        assert resolved_clip_id is not None
+        _console.print(f"[blue]🖼️ Phase: frames[/] Sampling frames for {resolved_clip_id} (max={max_frames})")
 
-        frames = sample_frames(
-            video_path=resolved_path,
-            start_s=0.0,
-            end_s=duration,
-            output_dir=str(frame_dir),
-            max_frames=max_frames,
-        )
-
-        if resolved_clip_id in self._clips:
-            self._clips[resolved_clip_id].frame_paths = frames
-        self.workspace.update_frames(resolved_clip_id, frames)
-        self.tracer.record_frames(
+        with self.tracer.video_frame_sampling(
             clip_id=resolved_clip_id,
-            frame_count=len(frames),
-        )
-        self._refresh_mount()
+            run_id=self.run_id,
+        ) as t:
+            duration = video_duration_seconds(resolved_path)
+            frame_dir = self.workspace.frame_dir(resolved_clip_id)
+
+            frames = sample_frames(
+                video_path=resolved_path,
+                start_s=0.0,
+                end_s=duration,
+                output_dir=str(frame_dir),
+                max_frames=max_frames,
+            )
+
+            if resolved_clip_id in self._clips:
+                self._clips[resolved_clip_id].frame_paths = frames
+            self.workspace.update_frames(resolved_clip_id, frames)
+            _console.print(f"[blue]🖼️ Phase: frames[/] Collected {len(frames)} frame(s)")
+            t.record(frame_count=len(frames))
+            self._refresh_mount()
+
         return frames
 
     def vision_query(
@@ -298,39 +330,54 @@ class VideoMontyREPL:
             collected_clips.append(latest.clip_path)
             collected_frames.extend(latest.frame_paths)
 
-        response = self.sub_llm.vision_completion(
-            question=prompt or query.question,
-            frame_paths=collected_frames,
-            clip_paths=collected_clips,
-            extra_context=f"video={query.video_path}",
-            timeout=300,
+        effective_prompt = prompt or query.question
+        _console.print(
+            f"[blue]👁️ Phase: vision[/] Querying vision model (clips={len(collected_clips)}, frames={len(collected_frames)})"
         )
 
-        vision_usage = self.sub_llm.last_vision_usage
-        vision_metadata = self.sub_llm.last_vision_call_metadata or {}
-
-        self.tracer.record_vision(
-            prompt=prompt or query.question,
+        with self.tracer.video_vision_query(
+            prompt=effective_prompt,
             frame_count=len(collected_frames),
             clip_count=len(collected_clips),
-            response_preview=response,
-            input_tokens=getattr(vision_usage, "input_tokens", None),
-            output_tokens=getattr(vision_usage, "output_tokens", None),
-            total_tokens=getattr(vision_usage, "total_tokens", None),
-            cost_usd=vision_metadata.get("cost_usd"),
-            model_used=vision_metadata.get("model_used"),
-            provider=vision_metadata.get("provider"),
-            duration_seconds=vision_metadata.get("duration_seconds"),
-        )
+            run_id=self.run_id,
+        ) as t:
+            response = self.sub_llm.vision_completion(
+                question=effective_prompt,
+                frame_paths=collected_frames,
+                clip_paths=collected_clips,
+                extra_context=f"video={query.video_path}",
+                timeout=300,
+            )
+
+            vision_usage = self.sub_llm.last_vision_usage
+            vision_metadata = self.sub_llm.last_vision_call_metadata or {}
+
+            t.record(
+                response_preview=response[:200],
+                input_tokens=getattr(vision_usage, "input_tokens", None),
+                output_tokens=getattr(vision_usage, "output_tokens", None),
+                total_tokens=getattr(vision_usage, "total_tokens", None),
+                cost_usd=vision_metadata.get("cost_usd"),
+                model_used=vision_metadata.get("model_used"),
+                provider=vision_metadata.get("provider"),
+                duration_seconds=vision_metadata.get("duration_seconds"),
+            )
+            t.record_llm_cost(
+                input_tokens=getattr(vision_usage, "input_tokens", None),
+                output_tokens=getattr(vision_usage, "output_tokens", None),
+                model_name=vision_metadata.get("model_used"),
+            )
+            _console.print("[blue]👁️ Phase: vision[/] Response received")
+
         return response
 
     def get_trace_log(self) -> list[dict[str, Any]]:
         """Return in-memory trace events emitted by retrieval/media/vision tools."""
-        return self.tracer.dump()
+        return self.tracer.dump_events()
 
     def persist_trace_events(self) -> None:
         """Persist current trace timeline into workspace manifest."""
-        self.workspace.record_trace_events(self.tracer.dump())
+        self.workspace.record_trace_events(self.tracer.dump_events())
 
     def get_clip_manifest(self) -> dict[str, Any]:
         """Return workspace manifest with windows and artifact records."""
@@ -350,51 +397,62 @@ class VideoMontyREPL:
         """Run one code block inside Monty with core + registered external tools."""
         self._reset_state()
         self._refresh_mount()
-        self.tracer.set_context(
-            phase="code_execution",
-            iteration=iteration,
-            code_block_index=code_block_index,
-            code_block_total=code_block_total,
-        )
-
-        start = time.time()
-        result: Any = None
-        stderr = ""
-
-        external_functions = {
-            "get_context": self._get_context,
-            "llm_query": self._llm_query,
-            "done": self._done,
-            **self._external_functions,
-        }
-
-        try:
-            result = self.repl.feed_run(
-                code,
-                external_functions=external_functions,
-                print_callback=self._print_callback,
-                os=self._os_access,
+        if code_block_index is not None and code_block_total is not None:
+            _console.print(
+                f"[blue]🧪 Phase: monty[/] Executing block {code_block_index}/{code_block_total}"
             )
-        except (MediaToolError, FileNotFoundError, ValueError) as exc:
-            stderr = str(exc)
-            self._stderr_lines.append(stderr)
-        except Exception as exc:
-            stderr = str(exc)
-            self._stderr_lines.append(stderr)
+        else:
+            _console.print("[blue]🧪 Phase: monty[/] Executing code block")
 
-        execution_time = time.time() - start
-        merged_stderr = stderr or "".join(self._stderr_lines)
-
-        self.tracer.record_code_execution(
+        with self.tracer.video_code_execution(
+            code=code,
+            run_id=self.run_id,
             iteration=iteration,
             code_block_index=code_block_index,
             code_block_total=code_block_total,
-            code=code,
-            execution_time=execution_time,
-            stderr=merged_stderr,
-            has_final_answer=self._is_done,
+        ) as t:
+            start = time.time()
+            result: Any = None
+            stderr = ""
+
+            external_functions = {
+                "get_context": self._get_context,
+                "llm_query": self._llm_query,
+                "done": self._done,
+                **self._external_functions,
+            }
+
+            try:
+                result = self.repl.feed_run(
+                    code,
+                    external_functions=external_functions,
+                    print_callback=self._print_callback,
+                    os=self._os_access,
+                )
+            except (MediaToolError, FileNotFoundError, ValueError) as exc:
+                stderr = str(exc)
+                self._stderr_lines.append(stderr)
+                t.record_error(exc)
+            except Exception as exc:
+                stderr = str(exc)
+                self._stderr_lines.append(stderr)
+                t.record_error(exc)
+
+            execution_time = time.time() - start
+            merged_stderr = stderr or "".join(self._stderr_lines)
+
+            t.record(
+                execution_time=round(execution_time, 3),
+                stderr_preview=merged_stderr[:200],
+                has_final_answer=self._is_done,
+                llm_queries_count=len(self._llm_queries),
+                stdout_preview="".join(self._stdout_lines)[:200],
+            )
+
+        _console.print(
+            f"[blue]🧪 Phase: monty[/] Done in {execution_time:.2f}s"
+            + (" (final answer signaled)" if self._is_done else "")
         )
-        self.tracer.clear_context("phase", "iteration", "code_block_index", "code_block_total")
 
         return VideoExecutionResult(
             stdout="".join(self._stdout_lines),

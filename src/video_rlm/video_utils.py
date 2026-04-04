@@ -30,10 +30,10 @@ def format_execution_feedback(result: VideoExecutionResult, index: int, total: i
     return "\n\n".join(parts)
 
 
-def extract_final_answer(response: str, execution_result: VideoExecutionResult | None) -> str | None:
+def extract_final_answer(response: str, execution_result: VideoExecutionResult | None) -> object | None:
     """Extract final answer from done(), FINAL(), or plain-text marker."""
     if execution_result is not None and execution_result.final_answer is not None:
-        return str(execution_result.final_answer)
+        return execution_result.final_answer
 
     final_match = re.search(r"FINAL\((.*?)\)", response, re.DOTALL)
     if final_match:

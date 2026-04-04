@@ -135,7 +135,7 @@ def transcribe_with_openai_api(
     *,
     video_path: str,
     output_path: str,
-    model: str = "gpt-4o-mini-transcribe",
+    model: str = "whisper-1",
     language: str = "en",
     api_key: str | None = None,
 ) -> str:
@@ -192,7 +192,7 @@ def ensure_subtitle_sidecar(
     mode: str = "auto",
     output_dir: str = "data/longvideobench/meta",
     local_model: str = "base",
-    api_model: str = "gpt-4o-mini-transcribe",
+    api_model: str = "whisper-1",
     language: str = "en",
 ) -> SubtitlePreparationResult:
     """Find or generate subtitle sidecar using local or API transcription."""

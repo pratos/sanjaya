@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import base64
 from pathlib import Path
 from typing import Any
+
+from pydantic_ai.messages import BinaryContent
 
 from sanjaya.utils.llm import LLMClient
 
@@ -55,38 +56,35 @@ class VideoLLMClient:
         extra_context: str | None = None,
         timeout: int | None = None,
     ) -> str:
-        """Best-effort multimodal completion that safely handles local artifacts."""
+        """Best-effort multimodal completion for local frame/clip artifacts."""
         frame_paths = frame_paths or []
         clip_paths = clip_paths or []
 
-        attachment_lines: list[str] = []
-        for path in frame_paths:
-            attachment_lines.append(self._encode_file_line(path, media_type="image/jpeg"))
-
-        for path in clip_paths:
-            attachment_lines.append(self._encode_file_line(path, media_type="video/mp4", max_bytes=128_000))
-
-        payload_parts = [
+        prompt_parts = [
             "You are analyzing evidence from a long video QA workflow.",
             f"Question: {question}",
+            "Summarize what is visually present and include confidence caveats.",
         ]
-
         if extra_context:
-            payload_parts.append(f"Context: {extra_context}")
+            prompt_parts.append(f"Context: {extra_context}")
 
-        if attachment_lines:
-            payload_parts.append("Attachments (data URLs; may be truncated):")
-            payload_parts.extend(attachment_lines)
-        else:
-            payload_parts.append("Attachments: none")
+        user_content: list[Any] = ["\n".join(prompt_parts)]
 
-        payload_parts.append(
-            "Return a concise textual evidence summary with likely actions/scenes and confidence caveats."
-        )
-        prompt = "\n".join(payload_parts)
+        valid_frames = [Path(path) for path in frame_paths if Path(path).exists()]
+        valid_clips = [Path(path) for path in clip_paths if Path(path).exists()]
+
+        for frame_path in valid_frames[:8]:
+            user_content.append(BinaryContent(data=frame_path.read_bytes(), media_type="image/jpeg"))
+
+        if not valid_frames:
+            for clip_path in valid_clips[:1]:
+                user_content.append(BinaryContent(data=clip_path.read_bytes(), media_type="video/mp4"))
+
+        if not valid_frames and not valid_clips:
+            user_content.append("No attachments were available.")
 
         try:
-            return self.vision_client.completion(prompt, timeout=timeout)
+            return self.vision_client.completion_with_user_content(user_content, timeout=timeout)
         except Exception as exc:
             attachment_preview = ", ".join(
                 [Path(p).name for p in frame_paths[:3]] + [Path(p).name for p in clip_paths[:2]]
@@ -95,14 +93,3 @@ class VideoLLMClient:
                 "Vision model unavailable; fallback summary: "
                 f"question='{question}', attachments=[{attachment_preview}], error='{exc}'"
             )
-
-    @staticmethod
-    def _encode_file_line(path: str, *, media_type: str, max_bytes: int = 64_000) -> str:
-        file_path = Path(path)
-        if not file_path.exists():
-            return f"- missing: {path}"
-
-        data = file_path.read_bytes()[:max_bytes]
-        encoded = base64.b64encode(data).decode("ascii")
-        truncated = " (truncated)" if file_path.stat().st_size > len(data) else ""
-        return f"- {file_path.name}{truncated}: data:{media_type};base64,{encoded}"
