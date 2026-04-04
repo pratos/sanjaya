@@ -69,6 +69,8 @@ class VideoMontyREPL:
         self._candidate_windows: list[CandidateWindow] = []
         self._candidate_by_id: dict[str, CandidateWindow] = {}
         self._clips: dict[str, ClipArtifact] = {}
+        self._visited_window_ids: set[str] = set()
+        self._visited_ranges: list[tuple[float, float]] = []
 
         self.register_external_function("list_candidate_windows", self.list_candidate_windows)
         self.register_external_function("extract_clip", self.extract_clip)
@@ -154,27 +156,49 @@ class VideoMontyREPL:
         self,
         *,
         question: str | None = None,
-        top_k: int = 8,
+        top_k: int | None = None,
         window_size_s: float = 45.0,
         stride_s: float = 30.0,
     ) -> list[dict[str, Any]]:
-        """Generate hybrid candidate windows from subtitle + sliding strategies."""
+        """Generate hybrid candidate windows from subtitle + sliding strategies.
+
+        Args:
+            top_k: Maximum windows to return.  When *None* (default) the
+                   value is auto-scaled with video duration so that longer
+                   videos get broader coverage:
+                   ``max(8, int(duration_s / 60))``.
+            question: Override the question used for subtitle scoring.
+            window_size_s: Size of each candidate window in seconds.
+            stride_s: Stride for the sliding-window generator.
+
+        Previously-visited windows (those that had clips extracted) are
+        automatically excluded so that successive calls surface fresh
+        content (progressive scanning).
+        """
         query = self._active_query()
         effective_question = question or query.question
-        _console.print(
-            f"[blue]🔎 Phase: retrieval[/] Generating candidate windows (top_k={top_k}, window={window_size_s}s)"
-        )
 
         with self.tracer.video_retrieval(run_id=self.run_id) as t:
             duration_s = video_duration_seconds(query.video_path)
 
+            # --- auto-scale top_k with video length ---
+            if top_k is None:
+                top_k = max(8, int(duration_s / 60))
+
+            _console.print(
+                f"[blue]🔎 Phase: retrieval[/] Generating candidate windows "
+                f"(top_k={top_k}, window={window_size_s}s, visited={len(self._visited_window_ids)})"
+            )
+
             subtitle_windows: list[CandidateWindow] = []
             if query.subtitle_path:
+                # Request extra subtitle windows to compensate for exclusions
+                subtitle_top = max(top_k * 2, 24) + len(self._visited_window_ids)
                 subtitle_windows = subtitle_anchored_windows(
                     question=effective_question,
                     subtitle_path=query.subtitle_path,
                     window_size_s=window_size_s,
-                    top_k=max(top_k, 12),
+                    top_k=subtitle_top,
                 )
 
             sliding = sliding_windows(
@@ -187,6 +211,8 @@ class VideoMontyREPL:
                 subtitle_windows=subtitle_windows,
                 sliding=sliding,
                 top_k=top_k,
+                exclude_ids=self._visited_window_ids,
+                exclude_ranges=self._visited_ranges,
             )
 
             self._candidate_windows = merged
@@ -197,6 +223,8 @@ class VideoMontyREPL:
                 subtitle_count=len(subtitle_windows),
                 sliding_count=len(sliding),
                 selected_count=len(merged),
+                visited_excluded=len(self._visited_window_ids),
+                auto_top_k=top_k,
             )
             self._refresh_mount()
 
@@ -219,6 +247,23 @@ class VideoMontyREPL:
 
         if clip_start is None or clip_end is None:
             raise ValueError("extract_clip requires window_id or explicit start_s/end_s")
+
+        # --- progressive scanning: mark this region as visited ---
+        if window_id:
+            self._visited_window_ids.add(window_id)
+        self._visited_ranges.append((clip_start, clip_end))
+        # Also mark any candidate windows that substantially overlap this
+        # extraction so they are excluded from future retrieval calls,
+        # even when the orchestrator used ad-hoc start_s/end_s.
+        for cand in self._candidate_windows:
+            if cand.window_id in self._visited_window_ids:
+                continue
+            overlap_start = max(cand.start_s, clip_start)
+            overlap_end = min(cand.end_s, clip_end)
+            overlap = max(0.0, overlap_end - overlap_start)
+            cand_len = cand.end_s - cand.start_s
+            if cand_len > 0 and overlap / cand_len >= 0.5:
+                self._visited_window_ids.add(cand.window_id)
 
         resolved_clip_id = clip_id or window_id or f"clip-{len(self._clips) + 1}"
         _console.print(

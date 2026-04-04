@@ -163,6 +163,24 @@ def sliding_windows(
     return windows
 
 
+def _overlaps_visited(
+    window: CandidateWindow,
+    visited_ranges: list[tuple[float, float]],
+    threshold: float = 0.5,
+) -> bool:
+    """Return True if *window* overlaps visited ranges by ≥ threshold fraction."""
+    if not visited_ranges:
+        return False
+    w_len = window.end_s - window.start_s
+    if w_len <= 0:
+        return False
+    total_overlap = 0.0
+    for v_start, v_end in visited_ranges:
+        overlap = max(0.0, min(window.end_s, v_end) - max(window.start_s, v_start))
+        total_overlap += overlap
+    return total_overlap / w_len >= threshold
+
+
 def hybrid_merge(
     *,
     subtitle_windows: list[CandidateWindow],
@@ -170,15 +188,31 @@ def hybrid_merge(
     top_k: int,
     subtitle_weight: float = 1.0,
     sliding_weight: float = 0.35,
+    exclude_ids: set[str] | None = None,
+    exclude_ranges: list[tuple[float, float]] | None = None,
 ) -> list[CandidateWindow]:
-    """Merge/re-rank windows from both strategies with weighted scoring."""
+    """Merge/re-rank windows from both strategies with weighted scoring.
+
+    Args:
+        exclude_ids: Window IDs to exclude (already-visited windows for
+                     progressive scanning).
+        exclude_ranges: Time ranges ``(start_s, end_s)`` already explored.
+                        Any window whose temporal overlap with visited
+                        ranges is ≥ 50% of its own length is dropped.
+    """
+    _exclude = exclude_ids or set()
+    _ranges = exclude_ranges or []
     merged: dict[str, CandidateWindow] = {}
 
     for window in subtitle_windows:
+        if window.window_id in _exclude or _overlaps_visited(window, _ranges):
+            continue
         weighted = window.model_copy(update={"score": round(window.score * subtitle_weight, 4)})
         merged[weighted.window_id] = weighted
 
     for window in sliding:
+        if window.window_id in _exclude or _overlaps_visited(window, _ranges):
+            continue
         weighted_score = round(window.score * sliding_weight, 4)
         if window.window_id in merged:
             existing = merged[window.window_id]
