@@ -1,4 +1,4 @@
-"""Background orchestrator that runs VideoRLM_REPL in a thread."""
+"""Background orchestrator that runs Agent in a thread."""
 
 from __future__ import annotations
 
@@ -7,9 +7,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
+from sanjaya import Agent, Answer
+from sanjaya.tools.video import VideoToolkit
 from sanjaya.tracing import Tracer
-from sanjaya.video_models import VideoAnswer
-from sanjaya.video_rlm_repl import VideoRLM_REPL
 
 
 @dataclass
@@ -19,7 +19,7 @@ class RunRecord:
     run_id: str
     status: str = "pending"  # pending | running | complete | error
     tracer: Tracer | None = None
-    answer: VideoAnswer | None = None
+    answer: Answer | None = None
     error: str | None = None
     thread: threading.Thread | None = None
 
@@ -28,7 +28,7 @@ _DATA_DIR = Path(__file__).resolve().parents[3] / "data"
 
 
 class OrchestratorService:
-    """Manages background VideoRLM_REPL runs and exposes their tracers for SSE polling."""
+    """Manages background Agent runs and exposes their tracers for SSE polling."""
 
     def __init__(self) -> None:
         self._runs: dict[str, RunRecord] = {}
@@ -52,7 +52,7 @@ class OrchestratorService:
 
         thread = threading.Thread(
             target=self._run_completion,
-            args=(record, video_path, question, subtitle_path, subtitle_mode, subtitle_api_model, max_iterations),
+            args=(record, video_path, question, subtitle_path, subtitle_mode, max_iterations),
             daemon=True,
         )
         record.thread = thread
@@ -79,34 +79,26 @@ class OrchestratorService:
         question: str,
         subtitle_path: str | None,
         subtitle_mode: str,
-        subtitle_api_model: str,
         max_iterations: int,
     ) -> None:
-        """Execute VideoRLM_REPL.completion() in a background thread."""
+        """Execute Agent.ask() in a background thread."""
         record.status = "running"
-        repl = VideoRLM_REPL(max_iterations=max_iterations)
 
-        # Create a fresh tracer per run to avoid cross-run event bleed
-        fresh_tracer = Tracer()
-        fresh_tracer._track_events = True
-        repl.tracer = fresh_tracer
+        tracer = Tracer(track_events=True)
+        record.tracer = tracer
 
         try:
-            # Expose the per-run tracer for SSE polling
-            record.tracer = fresh_tracer
+            agent = Agent(max_iterations=max_iterations, tracing=True)
+            agent._tracer = tracer
+            agent.use(VideoToolkit(subtitle_mode=subtitle_mode))
 
-            # Resolve relative paths against data/ directory
             resolved_video = self._resolve_video_path(video_path)
-
-            # completion() handles setup_query + full orchestration loop with
-            # hierarchical Logfire spans
-            answer = repl.completion(
-                video_path=resolved_video,
-                question=question,
-                subtitle_path=subtitle_path,
-                subtitle_mode=subtitle_mode,
-                subtitle_api_model=subtitle_api_model,
+            answer = agent.ask(
+                question,
+                video=resolved_video,
+                subtitle=subtitle_path,
             )
+
             record.answer = answer
             record.status = "complete"
         except Exception as exc:
