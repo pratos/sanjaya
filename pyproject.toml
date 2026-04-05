@@ -1,7 +1,7 @@
 [project]
-name = "video-rlm"
+name = "sanjaya"
 version = "0.1.0"
-description = "Add your description here"
+description = "Exploratory codebased for using RLMs for video workflows"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
