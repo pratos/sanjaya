@@ -7,7 +7,9 @@ from dataclasses import dataclass, field
 from typing import Any, Generator
 
 from .events import EventBuffer
-from .observability import get_logfire
+from .observability import configure_logfire, get_logfire
+
+_logfire_configured = False
 
 
 @dataclass
@@ -118,6 +120,11 @@ class Tracer:
         self._enabled_requested = enabled
         self._track_events = track_events
         self._event_buffer = EventBuffer()
+
+        global _logfire_configured
+        if enabled and not _logfire_configured:
+            configure_logfire()
+            _logfire_configured = True
 
     def _logfire(self) -> Any | None:
         return get_logfire(enabled=self._enabled_requested)

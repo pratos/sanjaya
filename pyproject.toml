@@ -12,6 +12,7 @@ dependencies = [
     "python-dotenv>=1.0",
     "rich>=14.0",
     "genai-prices>=0.0.56",
+    "nest-asyncio>=1.6.0",
 ]
 
 [project.optional-dependencies]

@@ -2,21 +2,44 @@
 
 Merges the old LLMClient (text-only) and VideoLLMClient (text + vision)
 into a single class. Adds concurrent batched completions.
+
+Accepts either a pydantic-ai ``Model`` object (with provider/auth
+already configured) or a plain model string like ``"openrouter:openai/gpt-4o"``.
+When a string is given, pydantic-ai resolves it using its built-in provider
+registry and the corresponding environment variables.
 """
 
 from __future__ import annotations
 
 import asyncio
-import os
 import time
 from pathlib import Path
 from typing import Any
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import BinaryContent
+from pydantic_ai.models import Model
 
-from ..settings import get_settings
 from .types import CallMetadata, UsageSnapshot
+
+# Type alias: callers can pass a pre-configured Model *or* a provider string.
+ModelSpec = Model | str
+
+_nest_asyncio_applied = False
+
+
+def _patch_event_loop() -> None:
+    """Apply nest_asyncio if running inside an existing event loop (e.g. Jupyter)."""
+    global _nest_asyncio_applied
+    if _nest_asyncio_applied:
+        return
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    import nest_asyncio
+    nest_asyncio.apply()
+    _nest_asyncio_applied = True
 
 
 class LLMClient:
@@ -24,15 +47,15 @@ class LLMClient:
 
     def __init__(
         self,
-        model: str,
-        vision_model: str | None = None,
-        fallback_model: str | None = None,
-        api_key: str | None = None,
+        model: ModelSpec,
+        vision_model: ModelSpec | None = None,
+        fallback_model: ModelSpec | None = None,
+        name: str = "llm",
     ):
         self.model = model
         self.vision_model = vision_model or model
         self.fallback_model = fallback_model
-        self._api_key = api_key
+        self.name = name
 
         self.last_usage: UsageSnapshot | None = None
         self.last_call_metadata: CallMetadata | None = None
@@ -142,31 +165,15 @@ class LLMClient:
 
         return user_content
 
-    def _ensure_api_key(self) -> None:
-        """Populate provider API key from explicit arg or settings into env vars."""
-        settings = get_settings()
-        provider = self.model.split(":", 1)[0] if ":" in self.model else "unknown"
-
-        if provider == "openrouter":
-            key = self._api_key or settings.openrouter_api_key
-            if key:
-                os.environ["OPENROUTER_API_KEY"] = key
-        elif provider.startswith("openai"):
-            key = self._api_key or settings.openai_api_key
-            if key:
-                os.environ["OPENAI_API_KEY"] = key
-        elif provider.startswith("anthropic"):
-            key = self._api_key or settings.anthropic_api_key
-            if key:
-                os.environ["ANTHROPIC_API_KEY"] = key
-
-    def _run_agent(self, model: str, payload: Any) -> tuple[str, Any]:
-        agent = Agent(model=model, output_type=str, retries=1, defer_model_check=True)
+    def _run_agent(self, model: ModelSpec, payload: Any) -> tuple[str, Any]:
+        _patch_event_loop()
+        model_label = model if isinstance(model, str) else getattr(model, "model_name", "unknown")
+        agent = Agent(model=model, output_type=str, retries=1, defer_model_check=True, name=f"sanjaya:{self.name}:{model_label}")
         result = agent.run_sync(payload)
         response = result.output if hasattr(result, "output") else str(result)
         return str(response), result
 
-    async def _run_agent_async(self, model: str, payload: Any) -> tuple[str, Any]:
+    async def _run_agent_async(self, model: ModelSpec, payload: Any) -> tuple[str, Any]:
         agent = Agent(model=model, output_type=str, retries=1, defer_model_check=True)
         result = await agent.run(payload)
         response = result.output if hasattr(result, "output") else str(result)
@@ -229,17 +236,21 @@ class LLMClient:
 
         return None
 
-    def _capture_metadata(self, model: str, result: Any, start: float, fallback_used: bool = False) -> CallMetadata:
+    def _capture_metadata(self, model: ModelSpec, result: Any, start: float, fallback_used: bool = False) -> CallMetadata:
         response = getattr(result, "response", None)
         model_name = getattr(response, "model_name", None) if response else None
         provider_name = getattr(response, "provider_name", None) if response else None
         provider_response_id = getattr(response, "provider_response_id", None) if response else None
         cost_usd = self._extract_cost_usd(result)
 
-        provider = model.split(":", 1)[0] if ":" in model else "unknown"
+        if isinstance(model, str):
+            provider = model.split(":", 1)[0] if ":" in model else "unknown"
+        else:
+            provider = type(model).__name__
+        model_str = model if isinstance(model, str) else getattr(model, "model_name", type(model).__name__)
         meta = CallMetadata(
-            requested_model=model,
-            model_used=model_name or model,
+            requested_model=model_str,
+            model_used=model_name or model_str,
             provider=provider_name or provider,
             provider_response_id=provider_response_id,
             fallback_used=fallback_used,
@@ -249,13 +260,12 @@ class LLMClient:
         self.last_call_metadata = meta
         return meta
 
-    def _call(self, model: str, payload: Any, timeout: int = 300) -> str:
+    def _call(self, model: ModelSpec, payload: Any, timeout: int = 300) -> str:
         """Core call with fallback."""
         _ = timeout  # Reserved for future provider-specific timeout support
         start = time.time()
         self.last_usage = None
         self.last_call_metadata = None
-        self._ensure_api_key()
 
         try:
             response, result = self._run_agent(model, payload)
@@ -275,7 +285,6 @@ class LLMClient:
 
     def _run_batched(self, calls: list[dict[str, Any]]) -> list[str]:
         """Run multiple calls concurrently."""
-        self._ensure_api_key()
 
         async def _gather():
             tasks = []

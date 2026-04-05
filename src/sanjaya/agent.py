@@ -8,12 +8,16 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from pydantic_ai.models import Model
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers import Provider
+
 from .answer import Answer, Evidence
 from .core.budget import BudgetTracker
-from .core.loop import LoopConfig, run_loop
+from .core.loop import LoopConfig, _model_label, run_loop
 from .core.prompts import build_system_prompt
 from .core.repl import AgentREPL
-from .llm.client import LLMClient
+from .llm.client import LLMClient, ModelSpec
 from .tools.base import Tool, Toolkit
 from .tools.builtins import (
     make_context_tool,
@@ -26,21 +30,74 @@ from .tools.registry import ToolRegistry
 from .tracing import Tracer
 
 
+def _resolve_model(
+    spec: ModelSpec,
+    provider: Provider | None,
+    primary: ModelSpec | None = None,
+) -> ModelSpec:
+    """Resolve a model spec into a concrete Model when possible.
+
+    Resolution order:
+    1. Already a Model object — return as-is.
+    2. A string + explicit ``provider`` — build an ``OpenAIChatModel`` with
+       that provider (works for OpenAI, OpenRouter, and any OpenAI-compatible
+       endpoint).
+    3. A string + a ``primary`` Model object — reuse the primary's provider
+       to build a sibling of the same Model class.
+    4. A plain provider-prefixed string like ``"openrouter:openai/gpt-4o"`` —
+       return as-is and let pydantic-ai resolve it from env vars.
+    """
+    if isinstance(spec, Model):
+        return spec
+
+    # Strip provider prefix for model name (e.g. "openrouter:openai/gpt-4.1-mini" → "openai/gpt-4.1-mini")
+    model_name = spec.split(":", 1)[1] if ":" in spec else spec
+
+    # Explicit provider takes precedence
+    if provider is not None:
+        try:
+            return OpenAIChatModel(model_name, provider=provider)
+        except Exception:
+            return spec
+
+    # Inherit from primary model's provider
+    if primary is not None and isinstance(primary, Model):
+        inherited = getattr(primary, "_provider", None)
+        if inherited is not None:
+            try:
+                return type(primary)(model_name, provider=inherited)
+            except Exception:
+                pass
+
+    return spec
+
+
 class Agent:
     """RLM agent that solves problems by writing code in a sandboxed REPL."""
 
     def __init__(
         self,
-        model: str = "openrouter:openai/gpt-5.3-codex",
-        sub_model: str = "openrouter:openai/gpt-4.1-mini",
-        vision_model: str | None = None,
-        fallback_model: str | None = "openrouter:vikhyatk/moondream2",
+        model: ModelSpec = "openrouter:openai/gpt-5.3-codex",
+        sub_model: ModelSpec = "openrouter:openai/gpt-4.1-mini",
+        vision_model: ModelSpec | None = None,
+        fallback_model: ModelSpec | None = "openrouter:vikhyatk/moondream2",
+        *,
+        provider: Provider | None = None,
         max_iterations: int = 20,
         max_budget_usd: float | None = None,
         max_timeout_s: float | None = None,
         compaction_threshold: float = 0.85,
         tracing: bool = True,
     ):
+        # Resolve all model specs through the provider chain.
+        # The primary model is resolved first so siblings can inherit from it.
+        model = _resolve_model(model, provider)
+        sub_model = _resolve_model(sub_model, provider, primary=model)
+        if vision_model is not None:
+            vision_model = _resolve_model(vision_model, provider, primary=model)
+        if fallback_model is not None:
+            fallback_model = _resolve_model(fallback_model, provider, primary=model)
+
         self.model = model
         self.sub_model = sub_model
         self.vision_model = vision_model
@@ -54,11 +111,13 @@ class Agent:
         self._orchestrator = LLMClient(
             model=model,
             fallback_model=fallback_model,
+            name="orchestrator",
         )
         self._sub_llm = LLMClient(
             model=sub_model,
             vision_model=vision_model or sub_model,
             fallback_model=fallback_model,
+            name="sub",
         )
 
         # Tool registry
@@ -197,36 +256,49 @@ class Agent:
             compaction_threshold=self.compaction_threshold,
         )
 
-        loop_result = run_loop(
-            orchestrator=self._orchestrator,
-            repl=repl,
-            system_prompt=system_prompt,
-            question=question,
-            config=config,
-            budget=self._budget,
-            tracer=self._tracer,
-        )
+        model_name = _model_label(self.model)
+        with self._tracer.completion(question=question, model=model_name) as comp_trace:
+            loop_result = run_loop(
+                orchestrator=self._orchestrator,
+                repl=repl,
+                system_prompt=system_prompt,
+                question=question,
+                config=config,
+                budget=self._budget,
+                tracer=self._tracer,
+            )
 
-        # Collect evidence from toolkits
-        evidence: list[Evidence] = []
-        for toolkit in self._registry.toolkits:
-            evidence.extend(toolkit.build_evidence())
+            # Collect evidence from toolkits
+            evidence: list[Evidence] = []
+            for toolkit in self._registry.toolkits:
+                evidence.extend(toolkit.build_evidence())
 
-        # Teardown toolkits
-        for toolkit in self._registry.toolkits:
-            toolkit.teardown()
+            # Teardown toolkits
+            for toolkit in self._registry.toolkits:
+                toolkit.teardown()
 
-        # Build Answer
-        answer = Answer(
-            question=question,
-            text=str(loop_result.raw_answer),
-            evidence=evidence,
-            iterations=loop_result.iterations_used,
-            cost_usd=self._budget.total_cost_usd,
-            input_tokens=self._budget.total_input_tokens,
-            output_tokens=self._budget.total_output_tokens,
-            wall_time_s=round(time.time() - start_time, 2),
-        )
+            # Build Answer
+            answer = Answer(
+                question=question,
+                text=str(loop_result.raw_answer),
+                evidence=evidence,
+                iterations=loop_result.iterations_used,
+                cost_usd=self._budget.total_cost_usd,
+                input_tokens=self._budget.total_input_tokens,
+                output_tokens=self._budget.total_output_tokens,
+                wall_time_s=round(time.time() - start_time, 2),
+            )
+
+            # Record cost on the top-level span
+            comp_trace.record_usage(
+                input_tokens=self._budget.total_input_tokens,
+                output_tokens=self._budget.total_output_tokens,
+            )
+            comp_trace.record_llm_cost(
+                input_tokens=self._budget.total_input_tokens,
+                output_tokens=self._budget.total_output_tokens,
+                model_name=model_name,
+            )
 
         self._last_answer = answer
         return answer

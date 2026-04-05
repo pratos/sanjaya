@@ -93,7 +93,7 @@ class AgentREPL:
                 "print_callback": self._print_callback,
             }
             if self._os_access is not None:
-                feed_kwargs["os_access"] = self._os_access
+                feed_kwargs["os"] = self._os_access
 
             result = self.monty.feed_run(code, **feed_kwargs)
         except Exception as e:
