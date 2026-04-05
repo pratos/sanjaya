@@ -12,6 +12,7 @@ registry and the corresponding environment variables.
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -25,21 +26,65 @@ from .types import CallMetadata, UsageSnapshot
 # Type alias: callers can pass a pre-configured Model *or* a provider string.
 ModelSpec = Model | str
 
-_nest_asyncio_applied = False
+# A persistent background thread + event loop for running async pydantic-ai
+# calls from synchronous code (e.g. Jupyter notebooks).  Reusing one loop
+# avoids the "Event loop is closed" error that happens when AsyncOpenAI's
+# connection pool outlives a throwaway thread's loop.
+_bg_loop: asyncio.AbstractEventLoop | None = None
+_bg_thread: threading.Thread | None = None
 
 
-def _patch_event_loop() -> None:
-    """Apply nest_asyncio if running inside an existing event loop (e.g. Jupyter)."""
-    global _nest_asyncio_applied
-    if _nest_asyncio_applied:
-        return
+def _get_bg_loop() -> asyncio.AbstractEventLoop:
+    """Return a long-lived event loop running in a background daemon thread."""
+    global _bg_loop, _bg_thread
+    if _bg_loop is not None and not _bg_loop.is_closed():
+        return _bg_loop
+
+    loop = asyncio.new_event_loop()
+    thread = threading.Thread(target=loop.run_forever, daemon=True, name="sanjaya-io")
+    thread.start()
+    _bg_loop = loop
+    _bg_thread = thread
+    return loop
+
+
+def _compute_cost(model_name: str, input_tokens: int, output_tokens: int) -> float | None:
+    """Compute cost from token counts using genai_prices."""
+    try:
+        from genai_prices import calc_price
+        from genai_prices.types import Usage
+
+        usage = Usage(input_tokens=input_tokens, output_tokens=output_tokens)
+        # Try model name as-is, strip provider prefix, strip date suffix
+        candidates = [model_name]
+        if "/" in model_name:
+            base = model_name.split("/", 1)[1]
+            candidates.append(base)
+            # Strip date suffix like "-20260224"
+            import re
+            stripped = re.sub(r"-\d{8}$", "", base)
+            if stripped != base:
+                candidates.append(stripped)
+
+        for ref in candidates:
+            for provider_id in ("openrouter", "openai", "anthropic"):
+                try:
+                    result = calc_price(usage, model_ref=ref, provider_id=provider_id)
+                    return float(result.total_price)
+                except LookupError:
+                    continue
+    except ImportError:
+        pass
+    return None
+
+
+def _has_running_loop() -> bool:
+    """Check if we're inside a running event loop (e.g. Jupyter)."""
     try:
         asyncio.get_running_loop()
+        return True
     except RuntimeError:
-        return
-    import nest_asyncio
-    nest_asyncio.apply()
-    _nest_asyncio_applied = True
+        return False
 
 
 class LLMClient:
@@ -143,11 +188,41 @@ class LLMClient:
         frame_paths: list[str] | None,
         clip_paths: list[str] | None,
     ) -> list[Any]:
-        """Build multimodal user content list for vision models."""
+        """Build multimodal user content list for vision models.
+
+        Only JPEG frames are sent — video clips are never sent as raw
+        binary because most providers (OpenAI Chat Completions, OpenRouter)
+        reject ``video/mp4`` payloads.  If clips are provided without
+        frames, we auto-sample frames from the first clip via ffmpeg.
+        """
         user_content: list[Any] = [prompt]
 
         valid_frames = [Path(p) for p in (frame_paths or []) if Path(p).exists()]
         valid_clips = [Path(p) for p in (clip_paths or []) if Path(p).exists()]
+
+        # If we have clips but no frames, auto-sample frames from the first clip.
+        if not valid_frames and valid_clips:
+            try:
+                import tempfile
+
+                from ..tools.video.media import sample_frames as _sample
+                from ..tools.video.media import video_duration_seconds
+                clip = str(valid_clips[0])
+                dur = video_duration_seconds(clip)
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    sampled = _sample(clip, start_s=0, end_s=dur, output_dir=tmpdir, max_frames=8)
+                    # Copy to a persistent location (tmpdir is cleaned up)
+                    import shutil
+                    persist_dir = valid_clips[0].parent / "_auto_frames"
+                    persist_dir.mkdir(exist_ok=True)
+                    persisted = []
+                    for p in sampled:
+                        dst = persist_dir / Path(p).name
+                        shutil.copy2(p, dst)
+                        persisted.append(dst)
+                    valid_frames = persisted
+            except Exception:
+                pass
 
         for frame_path in valid_frames[:8]:
             user_content.append(
@@ -155,21 +230,35 @@ class LLMClient:
             )
 
         if not valid_frames:
-            for clip_path in valid_clips[:1]:
-                user_content.append(
-                    BinaryContent(data=clip_path.read_bytes(), media_type="video/mp4")
-                )
-
-        if not valid_frames and not valid_clips:
             user_content.append("No visual attachments were available.")
 
         return user_content
 
     def _run_agent(self, model: ModelSpec, payload: Any) -> tuple[str, Any]:
-        _patch_event_loop()
         model_label = model if isinstance(model, str) else getattr(model, "model_name", "unknown")
         agent = Agent(model=model, output_type=str, retries=1, defer_model_check=True, name=f"sanjaya:{self.name}:{model_label}")
-        result = agent.run_sync(payload)
+
+        if _has_running_loop():
+            # Inside Jupyter: schedule the coroutine on a persistent background
+            # loop so the AsyncOpenAI client's connection pool stays alive.
+            # Propagate OTel context so spans nest correctly under the caller.
+            from opentelemetry import context as otel_context
+
+            parent_ctx = otel_context.get_current()
+
+            async def _run_with_context():
+                token = otel_context.attach(parent_ctx)
+                try:
+                    return await agent.run(payload)
+                finally:
+                    otel_context.detach(token)
+
+            loop = _get_bg_loop()
+            future = asyncio.run_coroutine_threadsafe(_run_with_context(), loop)
+            result = future.result()
+        else:
+            result = agent.run_sync(payload)
+
         response = result.output if hasattr(result, "output") else str(result)
         return str(response), result
 
@@ -229,10 +318,18 @@ class LLMClient:
                 if isinstance(computed, (int, float)):
                     return float(computed)
             except Exception:
-                return None
+                pass
 
         if isinstance(response_cost, (int, float)):
             return float(response_cost)
+
+        # Fallback: compute cost from token counts using genai_prices
+        if self.last_usage and (self.last_usage.input_tokens or self.last_usage.output_tokens):
+            model_name = getattr(response, "model_name", None) if response else None
+            if model_name:
+                cost = _compute_cost(model_name, self.last_usage.input_tokens, self.last_usage.output_tokens)
+                if cost is not None:
+                    return cost
 
         return None
 
@@ -286,25 +383,26 @@ class LLMClient:
     def _run_batched(self, calls: list[dict[str, Any]]) -> list[str]:
         """Run multiple calls concurrently."""
 
-        async def _gather():
-            tasks = []
-            for call in calls:
-                tasks.append(self._run_agent_async(call["model"], call["payload"]))
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            return results
+        if _has_running_loop():
+            from opentelemetry import context as otel_context
+            parent_ctx = otel_context.get_current()
 
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
+            async def _gather():
+                token = otel_context.attach(parent_ctx)
+                try:
+                    tasks = [self._run_agent_async(c["model"], c["payload"]) for c in calls]
+                    return await asyncio.gather(*tasks, return_exceptions=True)
+                finally:
+                    otel_context.detach(token)
 
-        if loop and loop.is_running():
-            # Already in async context — use nest_asyncio pattern or thread
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(asyncio.run, _gather())
-                raw_results = future.result()
+            loop = _get_bg_loop()
+            future = asyncio.run_coroutine_threadsafe(_gather(), loop)
+            raw_results = future.result()
         else:
+            async def _gather():
+                tasks = [self._run_agent_async(c["model"], c["payload"]) for c in calls]
+                return await asyncio.gather(*tasks, return_exceptions=True)
+
             raw_results = asyncio.run(_gather())
 
         responses: list[str] = []

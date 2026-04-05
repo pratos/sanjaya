@@ -22,19 +22,28 @@ _console = Console()
 _VIDEO_STRATEGY_PROMPT = """\
 ## Video Analysis Strategy
 
-You are analyzing a video. Here's the recommended workflow:
+You are analyzing a video. Use the video tools to visually verify your answer.
+Do NOT answer based on the transcript alone.
 
-1. **Understand the video**: Call `get_video_info()` to get duration, resolution, etc.
-2. **Find relevant segments**: Call `list_windows(question=...)` to get ranked temporal windows.
-3. **Extract and examine clips**: Use `extract_clip(window_id=...)` then `sample_frames(clip_id=...)`.
-4. **Analyze visually**: Use `vision_query(clip_id=..., prompt=...)` for visual analysis.
-5. **Batch analysis**: Use `vision_query_batched([...])` for multiple clips at once (much faster).
-6. **Iterate**: If initial clips aren't sufficient, call `list_windows()` again — previously-visited
-   windows are auto-excluded, so you'll get fresh content (progressive scanning).
-7. **Answer**: When confident, call `done(answer)`.
+Workflow (aim for 3-4 iterations total):
 
-The transcript (if available) is included below. You can search it with Python string operations
-or use llm_query() to analyze chunks — you don't need a special tool for transcript search.
+Iteration 1: Setup and extraction.
+  - get_video_info() to understand the video.
+  - list_windows(question=...) to find relevant segments.
+  - extract_clip() and sample_frames() for the top 2-3 windows.
+  You can do all of this in one code block.
+
+Iteration 2: Visual analysis.
+  - vision_query() or vision_query_batched() on the sampled frames.
+  - Print the results so you can read them next iteration.
+
+Iteration 3: Answer.
+  - Read the vision results from the previous output.
+  - Call done(answer) incorporating what you actually saw.
+
+Keep it focused. 2-3 clips is usually enough. Do NOT over-iterate.
+The transcript is below for context — use it to pick good timestamps,
+but ground your final answer in the visual evidence.
 """
 
 
