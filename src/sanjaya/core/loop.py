@@ -3,19 +3,18 @@
 from __future__ import annotations
 
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
 from rich.console import Console
 
-from contextlib import contextmanager
-
+from ..tracing.tracer import Tracer
 from .blocks import ExecutionResult, extract_code_blocks, extract_final_answer, format_execution_feedback
 from .budget import BudgetTracker
 from .compaction import compact_history
 from .prompts import next_action_prompt
 from .repl import AgentREPL
-from ..tracing.tracer import Tracer
 
 _console = Console()
 
@@ -37,6 +36,24 @@ class LoopResult:
     wall_time_s: float
 
 
+_VISION_TOOLS = {"vision_query", "vision_query_batched"}
+_DONE_SUPPRESSION_LIMIT = 1
+
+
+def _has_vision_tools(repl: AgentREPL) -> bool:
+    """Check if video/vision tools are registered."""
+    return bool(_VISION_TOOLS & {t.name for t in repl.registry.all_tools()})
+
+
+def _vision_analysis_done(messages: list[dict[str, str]]) -> bool:
+    """Check if vision_query has been called in any previous execution."""
+    for msg in messages:
+        content = msg.get("content", "")
+        if "vision_query(" in content or "vision_query_batched(" in content:
+            return True
+    return False
+
+
 def _run_iteration(
     *,
     orchestrator: Any,
@@ -49,6 +66,7 @@ def _run_iteration(
     tracer: Tracer | None,
     model_name: str,
     start_time: float,
+    done_suppression_count: int = 0,
 ) -> LoopResult | None:
     """Run a single iteration, wrapped in tracer spans. Returns LoopResult if done."""
 
@@ -89,20 +107,78 @@ def _run_iteration(
             messages.append({"role": "assistant", "content": response})
 
             last_result: ExecutionResult | None = None
+            tool_names = {t.name for t in repl.registry.all_tools()}
             for idx, code in enumerate(code_blocks, start=1):
-                with tracer.code_execution(code=code, block_index=idx) if tracer else _nullctx():
+                # Detect which tools are called in this code block
+                tools_used = [name for name in tool_names if name + "(" in code]
+
+                with tracer.code_execution(code=code, block_index=idx) if tracer else _nullctx() as exec_trace:
                     last_result = repl.execute(
                         code,
                         iteration=iteration + 1,
                         block_index=idx,
                         block_total=len(code_blocks),
                     )
+                    if exec_trace and last_result:
+                        llm_query_previews = [
+                            (
+                                f"#{i + 1}: prompt={len(prompt)}ch response={len(response)}ch\n"
+                                f"response_preview={response[:300]}"
+                            )
+                            for i, (prompt, response) in enumerate(last_result.llm_queries[:3])
+                        ]
+                        exec_trace.record(
+                            code=code,
+                            tools_used=tools_used,
+                            stdout=last_result.stdout[:500] if last_result.stdout else "",
+                            stderr=last_result.stderr[:500] if last_result.stderr else "",
+                            execution_time_s=last_result.execution_time,
+                            llm_queries_count=len(last_result.llm_queries),
+                            llm_queries_preview="\n\n".join(llm_query_previews),
+                        )
+
+                if tools_used:
+                    _console.print(f"[dim]  Block {idx}: {', '.join(tools_used)}[/]")
+                if last_result:
+                    if last_result.stderr:
+                        _console.print(f"[red]  ⚠ {last_result.stderr[:200]}[/]")
+                    if last_result.result is not None:
+                        preview = repr(last_result.result)[:200]
+                        _console.print(f"[dim]  → {preview}[/]")
+                    if last_result.llm_queries:
+                        _console.print(f"[dim]  📡 {len(last_result.llm_queries)} sub-LLM call(s)[/]")
                 feedback = format_execution_feedback(last_result, idx, len(code_blocks))
                 messages.append({"role": "user", "content": feedback})
 
             # Check for final answer
             final_answer = extract_final_answer(last_result, response)
             if final_answer is not None:
+                # Guard: if vision tools are registered but haven't been used yet,
+                # suppress done() and nudge the orchestrator to do visual analysis.
+                if (
+                    _has_vision_tools(repl)
+                    and not _vision_analysis_done(messages)
+                    and done_suppression_count < _DONE_SUPPRESSION_LIMIT
+                ):
+                    _console.print(
+                        "[yellow]⚠️  done() called without visual analysis — "
+                        "suppressing, nudging agent to use vision tools[/]"
+                    )
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "You called done() without performing visual analysis. "
+                            "The transcript alone is not sufficient. "
+                            "Please extract clips with extract_clip(), sample frames with "
+                            "sample_frames(), and analyze them with vision_query() before "
+                            "calling done(). Review the Video Analysis Strategy steps."
+                        ),
+                    })
+                    # Signal to the loop that we suppressed done()
+                    if iter_trace:
+                        iter_trace.record(done_suppressed=True, suppression_count=done_suppression_count + 1)
+                    return None  # continue to next iteration
+
                 _console.print("[bold green]✅ Final answer found![/]")
                 if iter_trace:
                     iter_trace.record_final_answer(str(final_answer))
@@ -186,6 +262,8 @@ def run_loop(
         {"role": "system", "content": system_prompt},
     ]
 
+    done_suppression_count = 0
+
     for iteration in range(config.max_iterations):
         # Check budget/timeout
         if budget.should_stop():
@@ -208,9 +286,17 @@ def run_loop(
             tracer=tracer,
             model_name=model_name,
             start_time=start_time,
+            done_suppression_count=done_suppression_count,
         )
         if result is not None:
             return result
+
+        # Track if done() was suppressed this iteration (message was appended)
+        if (
+            messages
+            and "You called done() without performing visual analysis" in messages[-1].get("content", "")
+        ):
+            done_suppression_count += 1
 
     # Max iterations reached — force final answer
     _console.print("[yellow]⚠️  Max iterations reached, forcing final answer[/]")

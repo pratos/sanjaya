@@ -9,8 +9,9 @@ import time
 from typing import Any
 
 from pydantic_ai.models import Model
-from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 from pydantic_ai.providers import Provider
+from pydantic_ai.providers.openai import OpenAIProvider
 
 from .answer import Answer, Evidence
 from .core.budget import BudgetTracker
@@ -39,9 +40,8 @@ def _resolve_model(
 
     Resolution order:
     1. Already a Model object — return as-is.
-    2. A string + explicit ``provider`` — build an ``OpenAIChatModel`` with
-       that provider (works for OpenAI, OpenRouter, and any OpenAI-compatible
-       endpoint).
+    2. A string + explicit ``provider`` — build an ``OpenAIResponsesModel``
+       with that provider (the Responses API is OpenAI's preferred API).
     3. A string + a ``primary`` Model object — reuse the primary's provider
        to build a sibling of the same Model class.
     4. A plain provider-prefixed string like ``"openrouter:openai/gpt-4o"`` —
@@ -53,10 +53,13 @@ def _resolve_model(
     # Strip provider prefix for model name (e.g. "openrouter:openai/gpt-4.1-mini" → "openai/gpt-4.1-mini")
     model_name = spec.split(":", 1)[1] if ":" in spec else spec
 
-    # Explicit provider takes precedence
+    # Explicit provider takes precedence.
+    # Use Responses API for direct OpenAI, Chat Completions for everything else
+    # (OpenRouter, custom endpoints don't support Responses API).
     if provider is not None:
         try:
-            return OpenAIChatModel(model_name, provider=provider)
+            model_cls = OpenAIResponsesModel if isinstance(provider, OpenAIProvider) else OpenAIChatModel
+            return model_cls(model_name, provider=provider)
         except Exception:
             return spec
 
@@ -200,13 +203,46 @@ class Agent:
                     repl.set_os_access(os_access)
 
         # Create builtin tool closures
+        sub_model_name = _model_label(self.sub_model)
+
         def _llm_query(prompt: str) -> str:
-            response = self._sub_llm.completion(prompt)
-            repl.record_llm_query(prompt, response)
+            with self._tracer.llm_call(model=sub_model_name, prompt=prompt) as llm_trace:
+                response = self._sub_llm.completion(prompt)
+                repl.record_llm_query(prompt, response)
+
+                llm_trace.record_response(response)
+
+                usage = self._sub_llm.last_usage
+                if usage:
+                    llm_trace.record_usage(
+                        input_tokens=usage.input_tokens,
+                        output_tokens=usage.output_tokens,
+                    )
+                    llm_trace.record_llm_cost(
+                        input_tokens=usage.input_tokens,
+                        output_tokens=usage.output_tokens,
+                        model_name=sub_model_name,
+                    )
+
+                metadata = self._sub_llm.last_call_metadata
+                if metadata:
+                    llm_trace.record(
+                        model_used=metadata.model_used,
+                        provider=metadata.provider,
+                        duration_seconds=metadata.duration_seconds,
+                        fallback_used=metadata.fallback_used,
+                        cost_usd=metadata.cost_usd,
+                    )
+
             return response
 
         def _llm_query_batched(prompts: list[str]) -> list[str]:
-            return self._sub_llm.completion_batched(prompts)
+            responses = self._sub_llm.completion_batched(prompts)
+            for prompt, response in zip(prompts, responses):
+                repl.record_llm_query(prompt, response)
+                with self._tracer.llm_call(model=sub_model_name, prompt=prompt, batched=True) as llm_trace:
+                    llm_trace.record_response(response)
+            return responses
 
         def _get_state() -> dict[str, Any]:
             state: dict[str, Any] = {
