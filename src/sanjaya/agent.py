@@ -86,7 +86,7 @@ class Agent:
         fallback_model: ModelSpec | None = "openrouter:vikhyatk/moondream2",
         *,
         provider: Provider | None = None,
-        max_iterations: int = 20,
+        max_iterations: int = 5,
         max_budget_usd: float | None = None,
         max_timeout_s: float | None = None,
         compaction_threshold: float = 0.85,
