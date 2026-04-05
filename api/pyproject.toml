@@ -1,0 +1,27 @@
+[project]
+name = "sanjaya-api"
+version = "0.1.0"
+description = "FastAPI bridge for VideoRLM orchestration monitoring"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]",
+    "sse-starlette>=2.0",
+    "video-rlm",
+]
+
+[tool.uv.sources]
+video-rlm = { path = ".." }
+
+[build-system]
+requires = ["setuptools>=78"]
+build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["F", "I"]
+
+[tool.setuptools.packages.find]
+where = ["."]
