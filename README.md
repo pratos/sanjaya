@@ -2,6 +2,10 @@
 
 Sanjaya is an extensible RLM (Recursive Language Model) agent framework with first-class video understanding. The agent writes Python in a sandboxed REPL, executes it, reads the result, and iterates until it can answer.
 
+## Why the name “Sanjaya”?
+
+In the Mahabharata, Sanjaya had the boon of divine sight and narrated the Kurukshetra war live to the blind king Dhritarashtra. The name fits this project’s goal: helping a model “see” video evidence and report what happened. (Slight too much, I know :P)
+
 ## Project status
 
 This project is currently vibe-researched and vibe-coded. The core flows work, but validation is still in progress. It still needs stronger benchmark coverage, especially on long-video evaluations such as LongVideoBench and related datasets.
