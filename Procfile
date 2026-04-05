@@ -1,2 +1,2 @@
-api: cd api && uv run uvicorn sanjaya_api.main:app --port 8000
-ui:  cd ui && bun dev
+api: uv run --project api uvicorn sanjaya_api.main:app --port 8000
+ui:  cd ui && bun dev --port 5100

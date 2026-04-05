@@ -616,10 +616,12 @@ class Tracer:
                 raise
             finally:
                 status = ctx._data.get("completion_status", "unknown")
+                full_answer = ctx._data.get("final_answer", "")
                 self._emit_event(
                     "run_end",
                     status=status,
-                    answer_preview=ctx._data.get("final_answer", "")[:300],
+                    answer_preview=full_answer[:300],
+                    answer_full=full_answer,
                     total_events=self._event_index,
                 )
 

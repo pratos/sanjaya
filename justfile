@@ -1,6 +1,6 @@
 set shell := ["bash", "-cu"]
 
-# Start API + UI together via Overmind.
+# Start API (port 8000) + UI (port 5100) together via Overmind.
 dev:
 	overmind start
 
