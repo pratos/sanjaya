@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from sanjaya.settings import get_settings
+from ..settings import get_settings
 
 
 class TranscriptionError(RuntimeError):

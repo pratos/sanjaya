@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, "src")
 
-from video_rlm.video_rlm_repl import VideoRLM_REPL
+from sanjaya.video_rlm_repl import VideoRLM_REPL
 
 
 def ensure_demo_subtitle(video_path: str) -> str:

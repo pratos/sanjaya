@@ -9,9 +9,9 @@ from typing import Any, Callable
 from pydantic_monty import MontyRepl
 from rich.console import Console
 
-from sanjaya.tracing import Tracer, get_tracer
+from .tracing import Tracer, get_tracer
 
-from .llm import VideoLLMClient
+from .video_llm import VideoLLMClient
 from .video_models import CandidateWindow, ClipArtifact, VideoQuery
 from .video_tools.media import MediaToolError, extract_clip, sample_frames, video_duration_seconds
 from .video_tools.monty_mount import WorkspaceMount

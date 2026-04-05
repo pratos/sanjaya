@@ -8,7 +8,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from video_rlm.video_models import CandidateWindow
+from ..video_models import CandidateWindow
 
 
 @dataclass

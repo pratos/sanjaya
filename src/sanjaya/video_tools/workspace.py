@@ -6,7 +6,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from video_rlm.video_models import CandidateWindow, ClipArtifact
+from ..video_models import CandidateWindow, ClipArtifact
 
 
 class ArtifactWorkspace:

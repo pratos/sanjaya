@@ -8,7 +8,7 @@ import sys
 
 sys.path.insert(0, "src")
 
-from video_rlm.video_rlm_repl import VideoRLM_REPL
+from sanjaya.video_rlm_repl import VideoRLM_REPL
 
 
 def _to_markdown(payload: dict) -> str:

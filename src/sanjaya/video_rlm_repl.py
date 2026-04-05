@@ -8,9 +8,9 @@ from pathlib import Path
 
 from rich.console import Console
 
-from sanjaya.tracing import Tracer, get_tracer
+from .tracing import Tracer, get_tracer
 
-from .llm import VideoLLMClient
+from .video_llm import VideoLLMClient
 from .video_models import VideoAnswer, VideoQuery
 from .video_prompts import (
     VIDEO_DEFAULT_QUERY,

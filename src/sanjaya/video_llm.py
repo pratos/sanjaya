@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic_ai.messages import BinaryContent
 
-from sanjaya.utils.llm import LLMClient
+from .utils.llm import LLMClient
 
 
 class VideoLLMClient:
