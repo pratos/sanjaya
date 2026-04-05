@@ -10,7 +10,6 @@ from pydantic_monty import MontyRepl
 from rich.console import Console
 
 from .tracing import Tracer, get_tracer
-
 from .video_llm import VideoLLMClient
 from .video_models import CandidateWindow, ClipArtifact, VideoQuery
 from .video_tools.media import MediaToolError, extract_clip, sample_frames, video_duration_seconds

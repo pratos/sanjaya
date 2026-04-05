@@ -1,22 +1,27 @@
 [project]
 name = "sanjaya"
-version = "0.1.0"
-description = "Exploratory codebased for using RLMs for video workflows"
+version = "0.2.0"
+description = "Extensible RLM agent framework with video understanding"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "camoufox[geoip]>=0.4.11",
-    "genai-prices>=0.0.56",
-    "jupyter>=1.1.1",
-    "logfire",
-    "loguru>=0.7.3",
-    "parallel-web>=0.4.2",
+    "pydantic>=2.0",
     "pydantic-ai>=0.2.0",
     "pydantic-monty>=0.0.9",
-    "pymupdf>=1.27.2.2",
-    "python-docx>=1.1.0",
-    "python-dotenv>=1.1.0",
-    "rich>=14.0.0",
+    "pydantic-settings>=2.0",
+    "python-dotenv>=1.0",
+    "rich>=14.0",
+    "genai-prices>=0.0.56",
+]
+
+[project.optional-dependencies]
+video = ["logfire"]
+tracing = ["logfire"]
+all = ["sanjaya[video,tracing]"]
+dev = [
+    "ruff",
+    "pytest",
+    "jupyter>=1.1.1",
 ]
 
 [build-system]

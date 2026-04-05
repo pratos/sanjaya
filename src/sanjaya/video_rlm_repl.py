@@ -9,7 +9,6 @@ from pathlib import Path
 from rich.console import Console
 
 from .tracing import Tracer, get_tracer
-
 from .video_llm import VideoLLMClient
 from .video_models import VideoAnswer, VideoQuery
 from .video_prompts import (
