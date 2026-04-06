@@ -23,7 +23,7 @@ def compact_history(
     llm: Any,  # LLMClient — avoid circular import
     system_prompt: str,
     threshold_pct: float = 0.85,
-    model_context_limit: int = 200_000,
+    model_context_limit: int = 50_000,
 ) -> list[dict[str, str]]:
     """Summarize message history when approaching context limit.
 

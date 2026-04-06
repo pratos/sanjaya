@@ -26,6 +26,27 @@ from .types import CallMetadata, UsageSnapshot
 # Type alias: callers can pass a pre-configured Model *or* a provider string.
 ModelSpec = Model | str
 
+
+def _compress_frame(frame_path: Path, max_dim: int = 768, quality: int = 60) -> bytes:
+    """Resize and re-compress a JPEG frame to reduce token cost.
+
+    Downscales the longest side to *max_dim* pixels (preserving aspect ratio)
+    and re-encodes at *quality* (1-95, lower = smaller).  Falls back to raw
+    bytes if Pillow is not installed.
+    """
+    try:
+        from PIL import Image
+        import io
+
+        img = Image.open(frame_path)
+        img.thumbnail((max_dim, max_dim))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=quality, optimize=True)
+        return buf.getvalue()
+    except ImportError:
+        return frame_path.read_bytes()
+
+
 # A persistent background thread + event loop for running async pydantic-ai
 # calls from synchronous code (e.g. Jupyter notebooks).  Reusing one loop
 # avoids the "Event loop is closed" error that happens when AsyncOpenAI's
@@ -225,8 +246,9 @@ class LLMClient:
                 pass
 
         for frame_path in valid_frames[:8]:
+            data = _compress_frame(frame_path, max_dim=768, quality=60)
             user_content.append(
-                BinaryContent(data=frame_path.read_bytes(), media_type="image/jpeg")
+                BinaryContent(data=data, media_type="image/jpeg")
             )
 
         if not valid_frames:

@@ -26,11 +26,15 @@ def extract_code_blocks(response: str) -> list[str]:
     return [block.strip() for block in pattern.findall(response)]
 
 
+_MAX_STDOUT_CHARS = 2_000
+_MAX_STDERR_CHARS = 1_000
+
+
 def _format_llm_queries(
     llm_queries: list[tuple[str, str]],
     *,
-    max_prompt_chars: int = 1_500,
-    max_response_chars: int = 6_000,
+    max_prompt_chars: int = 500,
+    max_response_chars: int = 1_500,
 ) -> str:
     """Render sub-LLM calls into compact feedback text for the orchestrator."""
     if not llm_queries:
@@ -60,9 +64,15 @@ def format_execution_feedback(result: ExecutionResult, block_index: int, block_t
     """Format REPL output as a user message for the next iteration."""
     parts = [f"Code block {block_index}/{block_total} executed."]
     if result.stdout:
-        parts.append(f"STDOUT:\n{result.stdout}")
+        stdout = result.stdout
+        if len(stdout) > _MAX_STDOUT_CHARS:
+            stdout = stdout[:_MAX_STDOUT_CHARS] + "\n...[stdout truncated]"
+        parts.append(f"STDOUT:\n{stdout}")
     if result.stderr:
-        parts.append(f"STDERR:\n{result.stderr}")
+        stderr = result.stderr
+        if len(stderr) > _MAX_STDERR_CHARS:
+            stderr = stderr[:_MAX_STDERR_CHARS] + "\n...[stderr truncated]"
+        parts.append(f"STDERR:\n{stderr}")
     if result.result is not None:
         # Format dicts/lists as readable JSON for the orchestrator
         if isinstance(result.result, (dict, list)):

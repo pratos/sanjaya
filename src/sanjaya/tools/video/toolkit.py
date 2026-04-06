@@ -12,7 +12,8 @@ from .media import extract_clip as _extract_clip_impl
 from .media import get_video_info, video_duration_seconds
 from .media import sample_frames as _sample_frames_impl
 from .mount import WorkspaceMount
-from .retrieval import hybrid_merge, sliding_windows, subtitle_anchored_windows
+from ...retrieval.sqlite_fts import SQLiteFTSBackend
+from .retrieval import hybrid_merge, load_subtitle_segments, sliding_windows, subtitle_anchored_windows
 from .transcription import ensure_subtitle_sidecar
 from .vision import make_vision_query_batched_fn, make_vision_query_fn
 from .workspace import ArtifactWorkspace
@@ -29,6 +30,7 @@ Workflow (aim for 3-4 iterations total):
 
 Iteration 1: Setup and extraction.
   - get_video_info() to understand the video.
+  - search_transcript(query) to find relevant dialogue and timestamps.
   - list_windows(question=...) to find relevant segments.
   - extract_clip() and sample_frames() for the top 2-3 windows.
   You can do all of this in one code block.
@@ -42,8 +44,8 @@ Iteration 3: Answer.
   - Call done(answer) incorporating what you actually saw.
 
 Keep it focused. 2-3 clips is usually enough. Do NOT over-iterate.
-The transcript is below for context — use it to pick good timestamps,
-but ground your final answer in the visual evidence.
+Use search_transcript() to find relevant dialogue, then use list_windows()
+with timestamps from the search results to target the right video segments.
 """
 
 
@@ -75,6 +77,9 @@ class VideoToolkit(Toolkit):
         self._mount: WorkspaceMount | None = None
         self._llm_client: Any = None  # Set by Agent before setup
 
+        # Transcript search
+        self._fts: SQLiteFTSBackend | None = None
+
         # Progressive scanning state
         self._candidate_windows: list[dict[str, Any]] = []
         self._candidate_by_id: dict[str, dict[str, Any]] = {}
@@ -105,6 +110,16 @@ class VideoToolkit(Toolkit):
             if result.subtitle_path:
                 self._subtitle_path = result.subtitle_path
                 self._transcript_text = self._load_transcript_text(result.subtitle_path)
+
+                # Index transcript segments into FTS for search_transcript()
+                segments = load_subtitle_segments(result.subtitle_path)
+                if segments:
+                    self._fts = SQLiteFTSBackend(path=":memory:")
+                    self._fts.index(
+                        documents=[seg.text for seg in segments],
+                        metadata=[{"start_s": seg.start_s, "end_s": seg.end_s} for seg in segments],
+                        collection="transcript",
+                    )
 
     def _load_transcript_text(self, subtitle_path: str) -> str | None:
         """Load transcript as readable text for prompt injection."""
@@ -145,9 +160,10 @@ class VideoToolkit(Toolkit):
         """No persistent cleanup needed."""
 
     def tools(self) -> list[Tool]:
-        """Returns all 7 video tools."""
+        """Returns all video tools."""
         return [
             self._make_get_video_info_tool(),
+            self._make_search_transcript_tool(),
             self._make_list_windows_tool(),
             self._make_extract_clip_tool(),
             self._make_sample_frames_tool(),
@@ -183,7 +199,11 @@ class VideoToolkit(Toolkit):
     def prompt_section(self) -> str | None:
         parts = [_VIDEO_STRATEGY_PROMPT]
         if self._transcript_text:
-            parts.append(f"\n## Transcript\n```\n{self._transcript_text}\n```")
+            parts.append(
+                "\n## Transcript\n"
+                "A transcript is available. Use `search_transcript(query)` to find "
+                "relevant segments by keyword. Do NOT expect the full transcript in context."
+            )
         return "\n".join(parts)
 
     def get_os_access(self) -> Any | None:
@@ -209,6 +229,39 @@ class VideoToolkit(Toolkit):
             fn=_get_video_info,
             parameters={},
             return_type="dict",
+        )
+
+    def _make_search_transcript_tool(self) -> Tool:
+        fts = self._fts
+
+        def _search_transcript(query: str, top_k: int = 5) -> list[dict]:
+            """Search the video transcript for segments matching a query.
+
+            Returns ranked results with text, timestamps, and relevance score.
+            Use this to find what was said at specific times or about specific topics.
+            """
+            if fts is None:
+                return [{"error": "No transcript indexed"}]
+            results = fts.search(query, top_k=top_k, collection="transcript")
+            return [
+                {
+                    "text": r["text"],
+                    "start_s": r["metadata"]["start_s"],
+                    "end_s": r["metadata"]["end_s"],
+                    "score": round(r["score"], 4),
+                }
+                for r in results
+            ]
+
+        return Tool(
+            name="search_transcript",
+            description="Search the video transcript by keyword/phrase. Returns matching segments with timestamps and scores.",
+            fn=_search_transcript,
+            parameters={
+                "query": ToolParam(name="query", type_hint="str", description="Search query."),
+                "top_k": ToolParam(name="top_k", type_hint="int", default=5, description="Max results."),
+            },
+            return_type="list[dict]",
         )
 
     def _make_list_windows_tool(self) -> Tool:

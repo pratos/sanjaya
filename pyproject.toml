@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-video = ["logfire"]
+video = ["logfire", "Pillow>=10.0"]
 tracing = ["logfire"]
 all = ["sanjaya[video,tracing]"]
 dev = [
