@@ -84,6 +84,7 @@ class VideoToolkit(Toolkit):
         self._workspace: ArtifactWorkspace | None = None
         self._mount: WorkspaceMount | None = None
         self._llm_client: Any = None  # Set by Agent before setup
+        self._tracer: Any = None  # Set by Agent before setup
 
         # Transcript search
         self._fts: SQLiteFTSBackend | None = None
@@ -486,6 +487,7 @@ class VideoToolkit(Toolkit):
                 llm_client=self._llm_client,
                 get_clips=lambda: toolkit._clips,
                 get_question=lambda: toolkit._question or "",
+                get_tracer=lambda: toolkit._tracer,
             )
         else:
             def fn(**kwargs: Any) -> str:
@@ -511,6 +513,7 @@ class VideoToolkit(Toolkit):
                 llm_client=self._llm_client,
                 get_clips=lambda: toolkit._clips,
                 get_question=lambda: toolkit._question or "",
+                get_tracer=lambda: toolkit._tracer,
             )
         else:
             def fn(queries: list[dict]) -> list[str]:

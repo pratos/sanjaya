@@ -21,10 +21,11 @@ _console = Console()
 
 @dataclass
 class LoopConfig:
-    max_iterations: int = 20
+    max_iterations: int = 8
     max_budget_usd: float | None = None
     max_timeout_s: float | None = None
     compaction_threshold: float = 0.85
+    critic_threshold: int = 70
 
 
 @dataclass
@@ -67,16 +68,18 @@ def _run_iteration(
     model_name: str,
     start_time: float,
     done_suppression_count: int = 0,
+    critic: Any | None = None,
+    answer_schema: dict[str, Any] | None = None,
 ) -> LoopResult | None:
     """Run a single iteration, wrapped in tracer spans. Returns LoopResult if done."""
 
     with tracer.iteration(iteration=iteration + 1) if tracer else _nullctx() as iter_trace:
         # Build orchestrator prompt
-        orchestrator_messages = messages + [next_action_prompt(question, iteration)]
+        orchestrator_messages = messages + [next_action_prompt(question, iteration, max_iterations=config.max_iterations)]
         prompt = "\n\n".join(m.get("content", "") for m in orchestrator_messages)
 
         # Call orchestrator LLM
-        _console.print("[dim]Querying orchestrator LLM...[/]")
+        _console.print("[dim]Querying root LLM...[/]")
 
         with tracer.orchestrator_call(model=model_name) if tracer else _nullctx() as orch_trace:
             response = orchestrator.completion(prompt)
@@ -182,6 +185,44 @@ def _run_iteration(
                         iter_trace.record(done_suppressed=True, suppression_count=done_suppression_count + 1)
                     return None  # continue to next iteration
 
+                # Critic evaluation (modality-agnostic quality gate)
+                if critic and answer_schema and iteration < config.max_iterations - 1:
+                    from .critic import evaluate_answer
+
+                    _console.print("[dim]Running critic evaluation...[/]")
+                    eval_result = evaluate_answer(
+                        question=question,
+                        answer=final_answer,
+                        schema=answer_schema,
+                        critic_client=critic,
+                        threshold=config.critic_threshold,
+                    )
+                    score = eval_result.get("score", 0)
+                    _console.print(f"[dim]Critic score: {score}/100[/]")
+
+                    if tracer:
+                        tracer.emit("sanjaya.critic_evaluation", **eval_result)
+
+                    if not eval_result["pass"]:
+                        gaps = eval_result.get("gaps", [])
+                        feedback = eval_result.get("feedback", "Answer needs improvement.")
+                        gap_text = "\n".join(f"- {g}" for g in gaps) if gaps else feedback
+
+                        _console.print(f"[yellow]⚠️  Critic rejected (score {score}): {feedback}[/]")
+                        messages.append({
+                            "role": "user",
+                            "content": (
+                                f"Your answer was evaluated (score: {score}/100).\n"
+                                f"Issues:\n{gap_text}\n\n"
+                                "Investigate these gaps and call done() again with an improved answer."
+                            ),
+                        })
+                        repl._is_done = False
+                        repl._final_value = None
+                        if iter_trace:
+                            iter_trace.record(critic_rejected=True, critic_score=score, critic_gaps=gaps)
+                        return None  # continue loop
+
                 _console.print("[bold green]✅ Final answer found![/]")
                 if iter_trace:
                     iter_trace.record_final_answer(str(final_answer))
@@ -243,6 +284,8 @@ def run_loop(
     config: LoopConfig,
     budget: BudgetTracker,
     tracer: Tracer | None = None,
+    critic: Any | None = None,
+    answer_schema: dict[str, Any] | None = None,
 ) -> LoopResult:
     """The RLM iteration loop.
 
@@ -290,6 +333,8 @@ def run_loop(
             model_name=model_name,
             start_time=start_time,
             done_suppression_count=done_suppression_count,
+            critic=critic,
+            answer_schema=answer_schema,
         )
         if result is not None:
             return result
@@ -303,7 +348,7 @@ def run_loop(
 
     # Max iterations reached — force final answer
     _console.print("[yellow]⚠️  Max iterations reached, forcing final answer[/]")
-    messages.append(next_action_prompt(question, config.max_iterations - 1, final_answer=True))
+    messages.append(next_action_prompt(question, config.max_iterations - 1, final_answer=True, max_iterations=config.max_iterations))
     forced_answer = orchestrator.completion(
         "\n\n".join(m.get("content", "") for m in messages)
     )

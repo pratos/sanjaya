@@ -172,8 +172,8 @@ class Tracer:
 
     @contextmanager
     def orchestrator_call(self, *, model: str, **kwargs: Any) -> Generator[TraceContext, None, None]:
-        """Orchestrator LLM call."""
-        with self._span("sanjaya.orchestrator_call", model=model, **kwargs) as ctx:
+        """Root LLM call."""
+        with self._span("sanjaya.root_llm_call", model=model, **kwargs) as ctx:
             yield ctx
 
     @contextmanager
@@ -190,8 +190,8 @@ class Tracer:
 
     @contextmanager
     def llm_call(self, *, model: str, prompt: str, **kwargs: Any) -> Generator[TraceContext, None, None]:
-        """Sub-LLM call (llm_query, vision_query, etc.)."""
-        with self._span("sanjaya.llm_call", model=model, prompt_chars=len(prompt), **kwargs) as ctx:
+        """Sub-LLM text call (llm_query)."""
+        with self._span("sanjaya.sub_llm_call.regular", model=model, prompt_chars=len(prompt), **kwargs) as ctx:
             yield ctx
 
     # ── Events ──────────────────────────────────────────────

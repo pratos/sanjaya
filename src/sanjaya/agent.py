@@ -84,12 +84,14 @@ class Agent:
         sub_model: ModelSpec = "openrouter:openai/gpt-4.1-mini",
         vision_model: ModelSpec | None = None,
         fallback_model: ModelSpec | None = None,
+        critic_model: ModelSpec | None = "openrouter:qwen/qwen3-30b-a3b-thinking-2507",
         *,
         provider: Provider | None = None,
-        max_iterations: int = 5,
+        max_iterations: int = 8,
         max_budget_usd: float | None = None,
         max_timeout_s: float | None = None,
         compaction_threshold: float = 0.85,
+        critic_threshold: int = 70,
         tracing: bool = True,
     ):
         # Resolve all model specs through the provider chain.
@@ -109,19 +111,21 @@ class Agent:
         self.max_budget_usd = max_budget_usd
         self.max_timeout_s = max_timeout_s
         self.compaction_threshold = compaction_threshold
+        self.critic_threshold = critic_threshold
 
         # LLM clients
         self._orchestrator = LLMClient(
             model=model,
             fallback_model=fallback_model,
-            name="orchestrator",
+            name="root_llm",
         )
         self._sub_llm = LLMClient(
             model=sub_model,
             vision_model=vision_model or sub_model,
             fallback_model=fallback_model,
-            name="sub",
+            name="sub_llm",
         )
+        self._critic = LLMClient(model=critic_model, name="critic") if critic_model else None
 
         # Tool registry
         self._registry = ToolRegistry()
@@ -142,9 +146,11 @@ class Agent:
         """Register tools or toolkits. Chainable."""
         for item in tools_or_toolkits:
             if isinstance(item, Toolkit):
-                # Inject LLM client for vision-capable toolkits
+                # Inject LLM client and tracer for vision-capable toolkits
                 if hasattr(item, "_llm_client"):
                     item._llm_client = self._sub_llm
+                if hasattr(item, "_tracer"):
+                    item._tracer = self._tracer
                 self._registry.register_toolkit(item)
             elif isinstance(item, Tool):
                 self._registry.register(item)
@@ -168,6 +174,7 @@ class Agent:
             from .tools.video import VideoToolkit
             vt = VideoToolkit()
             vt._llm_client = self._sub_llm
+            vt._tracer = self._tracer
             self._registry.register_toolkit(vt)
 
         # Build context dict for toolkits
@@ -284,12 +291,23 @@ class Agent:
             toolkit_sections=toolkit_sections,
         )
 
+        # Generate answer schema for this question
+        from .core.schema import generate_answer_schema, schema_to_prompt_section
+
+        answer_schema = generate_answer_schema(
+            question=question,
+            llm_client=self._sub_llm,
+        )
+        self._current_schema = answer_schema
+        system_prompt = system_prompt + "\n\n" + schema_to_prompt_section(answer_schema)
+
         # Run the loop
         config = LoopConfig(
             max_iterations=self.max_iterations,
             max_budget_usd=self.max_budget_usd,
             max_timeout_s=self.max_timeout_s,
             compaction_threshold=self.compaction_threshold,
+            critic_threshold=self.critic_threshold,
         )
 
         model_name = _model_label(self.model)
@@ -302,6 +320,8 @@ class Agent:
                 config=config,
                 budget=self._budget,
                 tracer=self._tracer,
+                critic=self._critic,
+                answer_schema=answer_schema,
             )
 
             # Collect evidence from toolkits
@@ -321,9 +341,18 @@ class Agent:
             )
 
             # Build Answer
+            raw = loop_result.raw_answer
+            if isinstance(raw, dict):
+                text = raw.get("summary") or raw.get("answer") or str(raw)
+                data = raw
+            else:
+                text = str(raw)
+                data = None
+
             answer = Answer(
                 question=question,
-                text=str(loop_result.raw_answer),
+                text=text,
+                data=data,
                 evidence=evidence,
                 iterations=loop_result.iterations_used,
                 cost_usd=self._budget.total_cost_usd,
@@ -388,13 +417,16 @@ class Agent:
         sub_model_name = _model_label(self.sub_model)
         vision_label = _model_label(self.vision_model) if self.vision_model else sub_model_name
 
+        raw = loop_result.raw_answer
         trace = {
             "run_id": workspace.run_id,
             "question": question,
             "model": model_name,
             "sub_model": sub_model_name,
             "vision_model": vision_label,
-            "answer": str(loop_result.raw_answer),
+            "answer": str(raw),
+            "answer_data": raw if isinstance(raw, dict) else None,
+            "answer_schema": getattr(self, "_current_schema", None),
             "iterations": loop_result.iterations_used,
             "wall_time_s": round(loop_result.wall_time_s, 2),
             "cost": self._budget.summary(),

@@ -64,7 +64,8 @@ def print_trace_summary(trace: dict[str, Any]) -> None:
     )
 
     events = trace.get("events", [])
-    orch_calls = [e for e in events if e.get("kind") == "sanjaya.orchestrator_call_end"]
-    llm_calls = [e for e in events if e.get("kind") == "sanjaya.llm_call_end"]
-    print(f"LLM calls: {len(orch_calls)} orchestrator + {len(llm_calls)} sub-LLM")
+    root_calls = [e for e in events if e.get("kind") == "sanjaya.root_llm_call_end"]
+    regular_calls = [e for e in events if e.get("kind") == "sanjaya.sub_llm_call.regular_end"]
+    vision_calls = [e for e in events if e.get("kind") == "sanjaya.sub_llm_call.vision_end"]
+    print(f"LLM calls: {len(root_calls)} root + {len(regular_calls)} sub-regular + {len(vision_calls)} sub-vision")
     print("---")

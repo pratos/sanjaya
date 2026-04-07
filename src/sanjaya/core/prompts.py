@@ -49,16 +49,14 @@ NOT available: os, sys, subprocess, pathlib, importlib, open(), file I/O, networ
 - Be efficient: batch related operations in one code block. Aim for 3-5 iterations, not 15.
 
 ## Answer format
-When calling done(value), provide a thorough, conversational answer. Include:
-- Direct references to what you observed (timestamps, visual details, quotes from analysis).
-- The reasoning chain: what evidence led you to your conclusion.
-- Any caveats or things you noticed that might be relevant.
-Do not return raw dicts or terse one-liners. Write a clear, detailed response
-as if explaining your findings to someone who hasn't seen the video.
+When calling done(value), pass a **dict** with the fields specified in the
+Structured Answer Format section below. Ground every field in evidence you
+actually observed (timestamps, quotes, visual details, source references).
+Do not include follow-up offers, suggestions for further analysis, or filler.
 """
 
 _NEXT_ACTION_TEMPLATE = """\
-Iteration {iteration}. User query: {query}
+Iteration {iteration}/{max_iterations}. User query: {query}
 Write Python code to investigate. Print results so you can observe them.
 Only call done(value) if you have already observed enough results to give a thorough answer."""
 
@@ -103,11 +101,20 @@ def build_system_prompt(
     return "\n".join(parts)
 
 
-def next_action_prompt(query: str, iteration: int, final_answer: bool = False) -> dict[str, str]:
+def next_action_prompt(
+    query: str,
+    iteration: int,
+    final_answer: bool = False,
+    max_iterations: int = 8,
+) -> dict[str, str]:
     """Prompt the orchestrator for the next step."""
     if final_answer:
         return {"role": "user", "content": _FORCE_FINAL}
     return {
         "role": "user",
-        "content": _NEXT_ACTION_TEMPLATE.format(iteration=iteration + 1, query=query),
+        "content": _NEXT_ACTION_TEMPLATE.format(
+            iteration=iteration + 1,
+            max_iterations=max_iterations,
+            query=query,
+        ),
     }

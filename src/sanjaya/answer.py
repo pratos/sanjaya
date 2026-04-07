@@ -20,6 +20,7 @@ class Answer(BaseModel):
 
     question: str
     text: str
+    data: dict[str, Any] | None = None
     evidence: list[Evidence] = []
     iterations: int
     cost_usd: float | None = None
