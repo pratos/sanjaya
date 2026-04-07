@@ -63,13 +63,13 @@ _VISION_FIRST_STRATEGY_PROMPT = """\
 You are analyzing a video where the answer is primarily VISUAL — on-screen content,
 products, diagrams, charts, UI elements, code, or physical objects.
 
-### Workflow (aim for 3 iterations, max 1 code block per response):
+### Workflow (aim for 3 iterations, EXACTLY 1 code block per response):
 
 **Iteration 1: Dense visual sampling.**
-In a single code block: get_video_info(), extract 5-6 clips spread across the video
+In a SINGLE code block: get_video_info(), extract 5-6 clips spread across the video
 (evenly spaced to cover the full duration), sample_frames() on each with max_frames=12,
 then run vision_query_batched() on all clips. Also do 2-3 search_transcript() calls
-for supplementary context. Print everything.
+for supplementary context. Print everything so you can read the results.
 
 **Iteration 2: Targeted deep dives.**
 Read what iteration 1 found. For the most relevant visual regions, extract more clips
@@ -81,11 +81,14 @@ Read all accumulated evidence. Call done(answer) with a thorough response that
 cites specific timestamps, visual observations, and transcript quotes.
 
 ### Key principles:
+- EXACTLY ONE code block per response. Never split into multiple blocks.
 - VISION IS YOUR PRIMARY EVIDENCE SOURCE for this question.
 - Sample densely: 12 frames per clip, 5-6 clips minimum in iteration 1.
 - Describe what you SEE on screen: text, UI elements, products, diagrams, code.
 - Use transcript as secondary confirmation, not the primary signal.
 - Always cite the timestamp range for each visual observation.
+- Print all tool results so you can read them in the next iteration.
+- Do NOT call done() until you have actual visual evidence to report.
 """
 
 

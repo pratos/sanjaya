@@ -55,6 +55,9 @@ Scoring guidance:
 - Score 0-30 if the answer contains mid-sentence fragments posing as quotes, \
 vague hand-waving as descriptions, or "corrections" / "details" that don't \
 describe what actually changed or happened.
+- Score 0 if the answer admits it could not extract information or has empty \
+lists for required fields. An answer that says "I could not find X" when X \
+was explicitly asked for is a failure, not an honest answer.
 """
 
 
