@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     # OpenRouter (primary provider)
     openrouter_api_key: str | None = None
 
+    # Moondream (vision)
+    moondream_api_key: str | None = None
+
 
 @lru_cache
 def get_settings() -> Settings:

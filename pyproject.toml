@@ -13,6 +13,7 @@ dependencies = [
     "rich>=14.0",
     "genai-prices>=0.0.56",
     "nest-asyncio>=1.6.0",
+    "moondream-station>=0.1.9",
 ]
 
 [project.optional-dependencies]

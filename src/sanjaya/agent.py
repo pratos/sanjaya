@@ -15,7 +15,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 
 from .answer import Answer, Evidence
 from .core.budget import BudgetTracker
-from .core.loop import LoopConfig, _model_label, run_loop
+from .core.loop import LoopConfig, LoopResult, _model_label, run_loop
 from .core.prompts import build_system_prompt
 from .core.repl import AgentREPL
 from .llm.client import LLMClient, ModelSpec
@@ -83,7 +83,7 @@ class Agent:
         model: ModelSpec = "openrouter:openai/gpt-5.3-codex",
         sub_model: ModelSpec = "openrouter:openai/gpt-4.1-mini",
         vision_model: ModelSpec | None = None,
-        fallback_model: ModelSpec | None = "openrouter:vikhyatk/moondream2",
+        fallback_model: ModelSpec | None = None,
         *,
         provider: Provider | None = None,
         max_iterations: int = 5,
@@ -313,6 +313,13 @@ class Agent:
             for toolkit in self._registry.toolkits:
                 toolkit.teardown()
 
+            # Auto-persist trace
+            self._persist_trace(
+                question=question,
+                loop_result=loop_result,
+                evidence=evidence,
+            )
+
             # Build Answer
             answer = Answer(
                 question=question,
@@ -358,6 +365,48 @@ class Agent:
         self._last_answer = None
         self._registry = ToolRegistry()
         self._tracer = Tracer(enabled=self._tracer._enabled_requested, track_events=True)
+
+    def _persist_trace(
+        self,
+        question: str,
+        loop_result: LoopResult,
+        evidence: list[Evidence],
+    ) -> None:
+        """Write trace.json alongside clips/frames in the workspace."""
+        import json
+
+        workspace = None
+        for toolkit in self._registry.toolkits:
+            if hasattr(toolkit, "_workspace") and toolkit._workspace is not None:
+                workspace = toolkit._workspace
+                break
+
+        if workspace is None:
+            return
+
+        model_name = _model_label(self.model)
+        sub_model_name = _model_label(self.sub_model)
+        vision_label = _model_label(self.vision_model) if self.vision_model else sub_model_name
+
+        trace = {
+            "run_id": workspace.run_id,
+            "question": question,
+            "model": model_name,
+            "sub_model": sub_model_name,
+            "vision_model": vision_label,
+            "answer": str(loop_result.raw_answer),
+            "iterations": loop_result.iterations_used,
+            "wall_time_s": round(loop_result.wall_time_s, 2),
+            "cost": self._budget.summary(),
+            "evidence_count": len(evidence),
+            "events": self._tracer.dump_events(),
+            "messages": loop_result.messages,
+        }
+
+        trace_path = workspace.run_dir / "trace.json"
+        trace_path.write_text(json.dumps(trace, indent=2, default=str), encoding="utf-8")
+
+        workspace.record_trace_events(self._tracer.dump_events())
 
     def _has_video_toolkit(self) -> bool:
         """Check if a VideoToolkit is already registered."""

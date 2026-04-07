@@ -81,6 +81,9 @@ def _run_iteration(
         with tracer.orchestrator_call(model=model_name) if tracer else _nullctx() as orch_trace:
             response = orchestrator.completion(prompt)
 
+            if orch_trace:
+                orch_trace.record_response(response)
+
             # Track usage
             usage = orchestrator.last_usage
             if usage:

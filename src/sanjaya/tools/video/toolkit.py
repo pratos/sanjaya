@@ -7,12 +7,12 @@ from typing import Any
 from rich.console import Console
 
 from ...answer import Evidence
+from ...retrieval.sqlite_fts import SQLiteFTSBackend
 from ..base import Tool, Toolkit, ToolParam
 from .media import extract_clip as _extract_clip_impl
 from .media import get_video_info, video_duration_seconds
 from .media import sample_frames as _sample_frames_impl
 from .mount import WorkspaceMount
-from ...retrieval.sqlite_fts import SQLiteFTSBackend
 from .retrieval import hybrid_merge, load_subtitle_segments, sliding_windows, subtitle_anchored_windows
 from .transcription import ensure_subtitle_sidecar
 from .vision import make_vision_query_batched_fn, make_vision_query_fn
@@ -23,29 +23,37 @@ _console = Console()
 _VIDEO_STRATEGY_PROMPT = """\
 ## Video Analysis Strategy
 
-You are analyzing a video. Use the video tools to visually verify your answer.
-Do NOT answer based on the transcript alone.
+You are analyzing a video. Your job is to build a thorough, specific answer
+by combining transcript evidence with visual confirmation.
 
-Workflow (aim for 3-4 iterations total):
+### Before you write any code, THINK:
+What specific details would make a great answer to this question?
+For a summary: who is speaking, what are they doing, what tools/concepts appear?
+For a factual question: what keywords, names, or events should you search for?
 
-Iteration 1: Setup and extraction.
-  - get_video_info() to understand the video.
-  - search_transcript(query) to find relevant dialogue and timestamps.
-  - list_windows(question=...) to find relevant segments.
-  - extract_clip() and sample_frames() for the top 2-3 windows.
-  You can do all of this in one code block.
+Let the question guide your searches — don't just use generic keywords.
 
-Iteration 2: Visual analysis.
-  - vision_query() or vision_query_batched() on the sampled frames.
-  - Print the results so you can read them next iteration.
+### Workflow (aim for 3 iterations, max 1 code block per response):
 
-Iteration 3: Answer.
-  - Read the vision results from the previous output.
-  - Call done(answer) incorporating what you actually saw.
+**Iteration 1: Explore and extract.**
+In a single code block: get_video_info(), run several search_transcript() calls
+with varied and specific queries, list_windows(), extract_clip() + sample_frames()
+for the top 2-3 windows. Print everything.
 
-Keep it focused. 2-3 clips is usually enough. Do NOT over-iterate.
-Use search_transcript() to find relevant dialogue, then use list_windows()
-with timestamps from the search results to target the right video segments.
+**Iteration 2: Visual analysis + gap-filling.**
+Read what iteration 1 found. Run vision_query_batched() on your clips.
+If the transcript revealed names, topics, or details you haven't explored yet,
+run additional targeted searches. Print all results.
+
+**Iteration 3: Synthesize and answer.**
+Read all accumulated evidence. Call done(answer) with a thorough response that
+cites specific timestamps, quotes, visual observations, and names.
+
+### Key principles:
+- 2-3 clips is enough. Do NOT over-extract.
+- Vary your search queries: try specific terms, phrases, names, not just generic words.
+- The transcript is your richest signal — mine it thoroughly before relying on vision.
+- Always visually verify at least one claim before calling done().
 """
 
 
@@ -89,9 +97,13 @@ class VideoToolkit(Toolkit):
 
     def setup(self, context: dict[str, Any]) -> None:
         """Initialize workspace, resolve subtitles, prepare state."""
-        self._video_path = context.get("video")
+        from pathlib import Path
+
+        video = context.get("video")
+        self._video_path = str(Path(video).resolve()) if video else None
         self._question = context.get("question")
-        self._subtitle_path = context.get("subtitle")
+        subtitle = context.get("subtitle")
+        self._subtitle_path = str(Path(subtitle).resolve()) if subtitle else None
 
         if not self._video_path:
             return
@@ -215,13 +227,13 @@ class VideoToolkit(Toolkit):
     # ── Tool factories ──────────────────────────────────────
 
     def _make_get_video_info_tool(self) -> Tool:
-        video_path = self._video_path
+        toolkit = self
 
         def _get_video_info() -> dict:
             """Get video metadata: duration, resolution, codec, file size."""
-            if not video_path:
+            if not toolkit._video_path:
                 return {"error": "No video loaded"}
-            return get_video_info(video_path)
+            return get_video_info(toolkit._video_path)
 
         return Tool(
             name="get_video_info",
@@ -232,7 +244,7 @@ class VideoToolkit(Toolkit):
         )
 
     def _make_search_transcript_tool(self) -> Tool:
-        fts = self._fts
+        toolkit = self
 
         def _search_transcript(query: str, top_k: int = 5) -> list[dict]:
             """Search the video transcript for segments matching a query.
@@ -240,9 +252,9 @@ class VideoToolkit(Toolkit):
             Returns ranked results with text, timestamps, and relevance score.
             Use this to find what was said at specific times or about specific topics.
             """
-            if fts is None:
+            if toolkit._fts is None:
                 return [{"error": "No transcript indexed"}]
-            results = fts.search(query, top_k=top_k, collection="transcript")
+            results = toolkit._fts.search(query, top_k=top_k, collection="transcript")
             return [
                 {
                     "text": r["text"],
@@ -406,11 +418,13 @@ class VideoToolkit(Toolkit):
     def _make_sample_frames_tool(self) -> Tool:
         toolkit = self
 
+        default_max = toolkit.max_frames_per_clip
+
         def _sample_frames(
             *,
             clip_id: str | None = None,
             clip_path: str | None = None,
-            max_frames: int = 8,
+            max_frames: int = default_max,
         ) -> list[str]:
             """Sample uniformly-spaced frames from an extracted clip."""
             resolved_clip_id = clip_id
@@ -459,7 +473,7 @@ class VideoToolkit(Toolkit):
             parameters={
                 "clip_id": ToolParam(name="clip_id", type_hint="str | None", default=None, description="ID from extract_clip()."),
                 "clip_path": ToolParam(name="clip_path", type_hint="str | None", default=None, description="Direct path (alternative to clip_id)."),
-                "max_frames": ToolParam(name="max_frames", type_hint="int", default=8, description="Number of frames to extract."),
+                "max_frames": ToolParam(name="max_frames", type_hint="int", default=default_max, description="Number of frames to extract."),
             },
             return_type="list[str]",
         )

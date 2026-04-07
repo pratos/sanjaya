@@ -35,8 +35,9 @@ def _compress_frame(frame_path: Path, max_dim: int = 768, quality: int = 60) -> 
     bytes if Pillow is not installed.
     """
     try:
-        from PIL import Image
         import io
+
+        from PIL import Image
 
         img = Image.open(frame_path)
         img.thumbnail((max_dim, max_dim))
@@ -108,6 +109,11 @@ def _has_running_loop() -> bool:
         return False
 
 
+def _moondream_cost(input_tokens: int, output_tokens: int) -> float:
+    """Compute Moondream cost at $0.30/1M input, $2.50/1M output."""
+    return (input_tokens * 0.30 + output_tokens * 2.50) / 1_000_000
+
+
 class LLMClient:
     """Unified LLM client with text, vision, and batched support."""
 
@@ -125,6 +131,20 @@ class LLMClient:
 
         self.last_usage: UsageSnapshot | None = None
         self.last_call_metadata: CallMetadata | None = None
+
+        # Moondream direct client (bypasses pydantic-ai for vision)
+        self._moondream: Any = None
+        from .moondream import MoondreamVisionClient, is_moondream_spec
+        if is_moondream_spec(self.vision_model):
+            if isinstance(self.vision_model, MoondreamVisionClient):
+                self._moondream = self.vision_model
+            else:
+                # Parse "moondream:model-name" spec
+                model_id = self.vision_model.split(":", 1)[1] if ":" in str(self.vision_model) else "moondream3-preview"
+                try:
+                    self._moondream = MoondreamVisionClient(model=model_id)
+                except Exception:
+                    pass  # Fall back to pydantic-ai path
 
     # ── Text completions ────────────────────────────────────
 
@@ -151,6 +171,25 @@ class LLMClient:
         timeout: int = 300,
     ) -> str:
         """Single vision completion with image/video attachments."""
+        # Moondream bypass: use direct SDK instead of pydantic-ai
+        if self._moondream is not None:
+            resolved_frames = self._resolve_frame_paths(frame_paths, clip_paths)
+            start = time.time()
+            response = self._moondream.query_frames(prompt, resolved_frames)
+            self.last_usage = UsageSnapshot(
+                input_tokens=self._moondream.total_input_tokens,
+                output_tokens=self._moondream.total_output_tokens,
+                total_tokens=self._moondream.total_input_tokens + self._moondream.total_output_tokens,
+            )
+            self.last_call_metadata = CallMetadata(
+                requested_model=self._moondream.model_name,
+                model_used=self._moondream.model_name,
+                provider="moondream",
+                duration_seconds=round(time.time() - start, 3),
+                cost_usd=_moondream_cost(self._moondream.total_input_tokens, self._moondream.total_output_tokens),
+            )
+            return response
+
         user_content = self._build_vision_content(prompt, frame_paths, clip_paths)
         return self._call(self.vision_model, user_content, timeout=timeout)
 
@@ -163,6 +202,16 @@ class LLMClient:
 
         Each query dict has keys: prompt, frame_paths, clip_paths.
         """
+        if self._moondream is not None:
+            return [
+                self.vision_completion(
+                    prompt=q["prompt"],
+                    frame_paths=q.get("frame_paths"),
+                    clip_paths=q.get("clip_paths"),
+                )
+                for q in queries
+            ]
+
         return self._run_batched([
             {
                 "model": self.vision_model,
@@ -185,6 +234,38 @@ class LLMClient:
         return None
 
     # ── Internal ────────────────────────────────────────────
+
+    def _resolve_frame_paths(
+        self,
+        frame_paths: list[str] | None,
+        clip_paths: list[str] | None,
+    ) -> list[str]:
+        """Resolve frame/clip paths into a flat list of existing frame paths."""
+        valid_frames = [p for p in (frame_paths or []) if Path(p).exists()]
+
+        if not valid_frames and clip_paths:
+            valid_clips = [p for p in clip_paths if Path(p).exists()]
+            if valid_clips:
+                try:
+                    import tempfile
+
+                    from ..tools.video.media import sample_frames as _sample
+                    from ..tools.video.media import video_duration_seconds
+                    clip = valid_clips[0]
+                    dur = video_duration_seconds(clip)
+                    with tempfile.TemporaryDirectory() as tmpdir:
+                        sampled = _sample(clip, start_s=0, end_s=dur, output_dir=tmpdir, max_frames=8)
+                        import shutil
+                        persist_dir = Path(clip).parent / "_auto_frames"
+                        persist_dir.mkdir(exist_ok=True)
+                        for p in sampled:
+                            dst = persist_dir / Path(p).name
+                            shutil.copy2(p, dst)
+                            valid_frames.append(str(dst))
+                except Exception:
+                    pass
+
+        return valid_frames
 
     def _as_prompt(self, payload: Any) -> str:
         if isinstance(payload, str):

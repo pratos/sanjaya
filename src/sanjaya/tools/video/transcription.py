@@ -228,6 +228,7 @@ def ensure_subtitle_sidecar(
 
     inferred_candidates = [
         src.with_name(f"{stem}_en.json"),
+        src.parent / "meta" / f"{stem}_en.json",
         src.parent.parent / "meta" / f"{stem}_en.json",
         Path(output_dir) / f"{stem}_en.json",
     ]
