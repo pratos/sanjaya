@@ -57,6 +57,45 @@ cites specific timestamps, quotes, visual observations, and names.
 """
 
 
+_VISION_FIRST_STRATEGY_PROMPT = """\
+## Video Analysis Strategy (Vision-First)
+
+You are analyzing a video where the answer is primarily VISUAL — on-screen content,
+products, diagrams, charts, UI elements, code, or physical objects.
+
+### Workflow (aim for 3 iterations, max 1 code block per response):
+
+**Iteration 1: Dense visual sampling.**
+In a single code block: get_video_info(), extract 5-6 clips spread across the video
+(evenly spaced to cover the full duration), sample_frames() on each with max_frames=12,
+then run vision_query_batched() on all clips. Also do 2-3 search_transcript() calls
+for supplementary context. Print everything.
+
+**Iteration 2: Targeted deep dives.**
+Read what iteration 1 found. For the most relevant visual regions, extract more clips
+for closer inspection. Use transcript to cross-reference specific visual claims.
+Run additional vision queries with specific prompts about what you need to verify.
+
+**Iteration 3: Synthesize and answer.**
+Read all accumulated evidence. Call done(answer) with a thorough response that
+cites specific timestamps, visual observations, and transcript quotes.
+
+### Key principles:
+- VISION IS YOUR PRIMARY EVIDENCE SOURCE for this question.
+- Sample densely: 12 frames per clip, 5-6 clips minimum in iteration 1.
+- Describe what you SEE on screen: text, UI elements, products, diagrams, code.
+- Use transcript as secondary confirmation, not the primary signal.
+- Always cite the timestamp range for each visual observation.
+"""
+
+
+def _ranges_overlap(a: dict[str, Any], b: dict[str, Any], threshold: float = 0.5) -> bool:
+    """Check if two clip ranges overlap by at least `threshold` of the shorter one."""
+    overlap = max(0.0, min(a["end_s"], b["end_s"]) - max(a["start_s"], b["start_s"]))
+    shorter = min(a["end_s"] - a["start_s"], b["end_s"] - b["start_s"])
+    return shorter > 0 and overlap / shorter >= threshold
+
+
 class VideoToolkit(Toolkit):
     """Complete video analysis toolkit with retrieval, media, and vision tools."""
 
@@ -85,6 +124,10 @@ class VideoToolkit(Toolkit):
         self._mount: WorkspaceMount | None = None
         self._llm_client: Any = None  # Set by Agent before setup
         self._tracer: Any = None  # Set by Agent before setup
+        self._budget: Any = None  # Set by Agent before setup
+
+        # Question modality (set during setup from context)
+        self._modality: str = "balanced"
 
         # Transcript search
         self._fts: SQLiteFTSBackend | None = None
@@ -103,6 +146,7 @@ class VideoToolkit(Toolkit):
         video = context.get("video")
         self._video_path = str(Path(video).resolve()) if video else None
         self._question = context.get("question")
+        self._modality = context.get("modality", "balanced")
         subtitle = context.get("subtitle")
         self._subtitle_path = str(Path(subtitle).resolve()) if subtitle else None
 
@@ -197,20 +241,39 @@ class VideoToolkit(Toolkit):
         }
 
     def build_evidence(self) -> list[Evidence]:
-        evidence: list[Evidence] = []
-        for clip_id, clip in self._clips.items():
-            evidence.append(Evidence(
-                source=f"video:{clip['start_s']:.1f}s-{clip['end_s']:.1f}s",
-                rationale=f"Clip {clip_id} extracted for analysis",
+        # Sort clips by start time and merge overlapping ranges
+        sorted_clips = sorted(self._clips.values(), key=lambda c: c["start_s"])
+        merged: list[dict[str, Any]] = []
+        for clip in sorted_clips:
+            if merged and _ranges_overlap(merged[-1], clip):
+                prev = merged[-1]
+                prev["start_s"] = min(prev["start_s"], clip["start_s"])
+                prev["end_s"] = max(prev["end_s"], clip["end_s"])
+                # Keep the clip with more frames
+                if len(clip.get("frame_paths", [])) > len(prev.get("frame_paths", [])):
+                    prev["clip_path"] = clip["clip_path"]
+                    prev["frame_paths"] = clip["frame_paths"]
+                    prev["clip_id"] = clip["clip_id"]
+            else:
+                merged.append(dict(clip))
+
+        return [
+            Evidence(
+                source=f"video:{c['start_s']:.1f}s-{c['end_s']:.1f}s",
+                rationale=f"Clip {c['clip_id']} extracted for analysis",
                 artifacts={
-                    "clip_path": clip.get("clip_path"),
-                    "frame_paths": clip.get("frame_paths", []),
+                    "clip_path": c.get("clip_path"),
+                    "frame_paths": c.get("frame_paths", []),
                 },
-            ))
-        return evidence
+            )
+            for c in merged
+        ]
 
     def prompt_section(self) -> str | None:
-        parts = [_VIDEO_STRATEGY_PROMPT]
+        if self._modality == "vision_primary":
+            parts = [_VISION_FIRST_STRATEGY_PROMPT]
+        else:
+            parts = [_VIDEO_STRATEGY_PROMPT]
         if self._transcript_text:
             parts.append(
                 "\n## Transcript\n"
@@ -489,6 +552,7 @@ class VideoToolkit(Toolkit):
                 get_clips=lambda: toolkit._clips,
                 get_question=lambda: toolkit._question or "",
                 get_tracer=lambda: toolkit._tracer,
+                get_budget=lambda: toolkit._budget,
             )
         else:
             def fn(**kwargs: Any) -> str:
@@ -515,6 +579,7 @@ class VideoToolkit(Toolkit):
                 get_clips=lambda: toolkit._clips,
                 get_question=lambda: toolkit._question or "",
                 get_tracer=lambda: toolkit._tracer,
+                get_budget=lambda: toolkit._budget,
             )
         else:
             def fn(queries: list[dict]) -> list[str]:

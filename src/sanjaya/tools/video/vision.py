@@ -5,12 +5,30 @@ from __future__ import annotations
 from typing import Any
 
 
+def _record_vision_budget(llm_client: Any, get_budget: Any) -> None:
+    """Record vision call cost in the budget tracker if available."""
+    budget = get_budget() if get_budget else None
+    if budget is None:
+        return
+    usage = getattr(llm_client, "last_usage", None)
+    if usage:
+        cost = getattr(llm_client, "last_cost_usd", None) or 0.0
+        model = getattr(llm_client, "model", None)
+        budget.record(
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            cost_usd=cost,
+            model=str(model) if model else "vision",
+        )
+
+
 def make_vision_query_fn(
     *,
     llm_client: Any,  # LLMClient
     get_clips: Any,  # Callable that returns clips dict
     get_question: Any,  # Callable that returns question string
     get_tracer: Any = None,  # Callable that returns Tracer or None
+    get_budget: Any = None,  # Callable that returns BudgetTracker or None
 ) -> Any:
     """Create a vision_query closure bound to toolkit state."""
 
@@ -73,13 +91,16 @@ def make_vision_query_fn(
                 metadata = llm_client.last_call_metadata
                 if metadata:
                     ctx.record(cost_usd=metadata.cost_usd, duration_seconds=metadata.duration_seconds)
+                _record_vision_budget(llm_client, get_budget)
                 return result
         else:
-            return llm_client.vision_completion(
+            result = llm_client.vision_completion(
                 prompt=effective_prompt,
                 frame_paths=collected_frames if collected_frames else None,
                 clip_paths=collected_clips if collected_clips else None,
             )
+            _record_vision_budget(llm_client, get_budget)
+            return result
 
     return vision_query
 
@@ -90,6 +111,7 @@ def make_vision_query_batched_fn(
     get_clips: Any,
     get_question: Any,
     get_tracer: Any = None,  # Callable that returns Tracer or None
+    get_budget: Any = None,  # Callable that returns BudgetTracker or None
 ) -> Any:
     """Create a vision_query_batched closure bound to toolkit state."""
 
@@ -136,8 +158,11 @@ def make_vision_query_batched_fn(
                 usage = llm_client.last_usage
                 if usage:
                     ctx.record_usage(input_tokens=usage.input_tokens, output_tokens=usage.output_tokens)
+                _record_vision_budget(llm_client, get_budget)
                 return results
         else:
-            return llm_client.vision_completion_batched(batch)
+            results = llm_client.vision_completion_batched(batch)
+            _record_vision_budget(llm_client, get_budget)
+            return results
 
     return vision_query_batched

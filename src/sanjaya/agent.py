@@ -151,6 +151,8 @@ class Agent:
                     item._llm_client = self._sub_llm
                 if hasattr(item, "_tracer"):
                     item._tracer = self._tracer
+                if hasattr(item, "_budget"):
+                    item._budget = self._budget
                 self._registry.register_toolkit(item)
             elif isinstance(item, Tool):
                 self._registry.register(item)
@@ -175,7 +177,14 @@ class Agent:
             vt = VideoToolkit()
             vt._llm_client = self._sub_llm
             vt._tracer = self._tracer
+            vt._budget = self._budget
             self._registry.register_toolkit(vt)
+
+        # Classify question modality for video analysis strategy
+        modality = "balanced"
+        if video:
+            from .core.schema import classify_question_modality
+            modality = classify_question_modality(question, self._sub_llm)
 
         # Build context dict for toolkits
         context_dict: dict[str, Any] = {
@@ -183,6 +192,7 @@ class Agent:
             "context": context,
             "video": video,
             "subtitle": subtitle,
+            "modality": modality,
         }
 
         # Setup toolkits
@@ -221,6 +231,7 @@ class Agent:
 
                 usage = self._sub_llm.last_usage
                 if usage:
+                    cost = self._sub_llm.last_cost_usd or 0.0
                     llm_trace.record_usage(
                         input_tokens=usage.input_tokens,
                         output_tokens=usage.output_tokens,
@@ -229,6 +240,12 @@ class Agent:
                         input_tokens=usage.input_tokens,
                         output_tokens=usage.output_tokens,
                         model_name=sub_model_name,
+                    )
+                    self._budget.record(
+                        input_tokens=usage.input_tokens,
+                        output_tokens=usage.output_tokens,
+                        cost_usd=cost,
+                        model=sub_model_name,
                     )
 
                 metadata = self._sub_llm.last_call_metadata
@@ -291,16 +308,6 @@ class Agent:
             toolkit_sections=toolkit_sections,
         )
 
-        # Generate answer schema for this question
-        from .core.schema import generate_answer_schema, schema_to_prompt_section
-
-        answer_schema = generate_answer_schema(
-            question=question,
-            llm_client=self._sub_llm,
-        )
-        self._current_schema = answer_schema
-        system_prompt = system_prompt + "\n\n" + schema_to_prompt_section(answer_schema)
-
         # Run the loop
         config = LoopConfig(
             max_iterations=self.max_iterations,
@@ -312,6 +319,17 @@ class Agent:
 
         model_name = _model_label(self.model)
         with self._tracer.completion(question=question, model=model_name) as comp_trace:
+            # Generate answer schema for this question
+            from .core.schema import generate_answer_schema, schema_to_prompt_section
+
+            with self._tracer._span("sanjaya.schema_generation", question_chars=len(question)):
+                answer_schema = generate_answer_schema(
+                    question=question,
+                    llm_client=self._sub_llm,
+                )
+            self._current_schema = answer_schema
+            system_prompt = system_prompt + "\n\n" + schema_to_prompt_section(answer_schema)
+
             loop_result = run_loop(
                 orchestrator=self._orchestrator,
                 repl=repl,

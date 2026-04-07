@@ -39,6 +39,8 @@ class LoopResult:
 
 _VISION_TOOLS = {"vision_query", "vision_query_batched"}
 _DONE_SUPPRESSION_LIMIT = 1
+_STUCK_WINDOW = 3
+_STUCK_MAX_TRIGGERS = 2
 
 
 def _has_vision_tools(repl: AgentREPL) -> bool:
@@ -52,6 +54,33 @@ def _vision_analysis_done(messages: list[dict[str, str]]) -> bool:
         content = msg.get("content", "")
         if "vision_query(" in content or "vision_query_batched(" in content:
             return True
+    return False
+
+
+def _get_toolkit_coverage(repl: AgentREPL) -> float:
+    """Get total temporal coverage in seconds from video toolkits."""
+    for tk in repl.registry.toolkits:
+        if hasattr(tk, "get_state"):
+            return tk.get_state().get("total_coverage_s", 0.0)
+    return 0.0
+
+
+def _is_stuck(
+    scores: list[int],
+    coverages: list[float],
+    window: int = _STUCK_WINDOW,
+) -> bool:
+    """Stuck if recent critic scores are flat/declining AND coverage hasn't grown."""
+    if len(scores) < window:
+        return False
+    recent = scores[-window:]
+    # Scores not improving (spread < 10 and last <= first)
+    if max(recent) - min(recent) < 10 and recent[-1] <= recent[0]:
+        # Coverage not growing
+        if len(coverages) >= window:
+            recent_cov = coverages[-window:]
+            if recent_cov[-1] - recent_cov[0] < 5.0:
+                return True
     return False
 
 
@@ -196,6 +225,7 @@ def _run_iteration(
                         schema=answer_schema,
                         critic_client=critic,
                         threshold=config.critic_threshold,
+                        budget=budget,
                     )
                     score = eval_result.get("score", 0)
                     _console.print(f"[dim]Critic score: {score}/100[/]")
@@ -309,6 +339,9 @@ def run_loop(
     ]
 
     done_suppression_count = 0
+    critic_scores: list[int] = []
+    coverage_history: list[float] = []
+    stuck_count = 0
 
     for iteration in range(config.max_iterations):
         # Check budget/timeout
@@ -345,6 +378,34 @@ def run_loop(
             and "You called done() without performing visual analysis" in messages[-1].get("content", "")
         ):
             done_suppression_count += 1
+
+        # Track critic rejections and coverage for stuck detection
+        last_msg = messages[-1].get("content", "") if messages else ""
+        if "Your answer was evaluated (score:" in last_msg:
+            import re as _re
+            score_match = _re.search(r"score:\s*(\d+)/100", last_msg)
+            if score_match:
+                critic_scores.append(int(score_match.group(1)))
+                coverage_history.append(_get_toolkit_coverage(repl))
+
+                if _is_stuck(critic_scores, coverage_history):
+                    stuck_count += 1
+                    if stuck_count >= _STUCK_MAX_TRIGGERS:
+                        _console.print("[yellow]⚠️  Stuck twice, forcing early answer[/]")
+                        break
+                    _console.print("[yellow]⚠️  Stuck detected — nudging strategy change[/]")
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "You appear to be stuck — the last few attempts scored "
+                            "similarly and you haven't explored new video regions. "
+                            "CHANGE YOUR APPROACH: try different search queries, "
+                            "look at different parts of the video, or use vision_query "
+                            "on unexplored regions. If you've exhausted available "
+                            "evidence, call done() with your best answer noting "
+                            "what you couldn't verify."
+                        ),
+                    })
 
     # Max iterations reached — force final answer
     _console.print("[yellow]⚠️  Max iterations reached, forcing final answer[/]")

@@ -205,7 +205,7 @@ def ensure_subtitle_sidecar(
     video_path: str,
     explicit_subtitle_path: str | None = None,
     mode: str = "auto",
-    output_dir: str = "data/longvideobench/meta",
+    output_dir: str | None = None,
     local_model: str = "base",
     api_model: str = "gpt-4o-transcribe-diarize",
     language: str = "en",
@@ -230,8 +230,9 @@ def ensure_subtitle_sidecar(
         src.with_name(f"{stem}_en.json"),
         src.parent / "meta" / f"{stem}_en.json",
         src.parent.parent / "meta" / f"{stem}_en.json",
-        Path(output_dir) / f"{stem}_en.json",
     ]
+    if output_dir is not None:
+        inferred_candidates.append(Path(output_dir) / f"{stem}_en.json")
 
     for candidate in inferred_candidates:
         if candidate.exists():
@@ -244,7 +245,11 @@ def ensure_subtitle_sidecar(
     if mode_normalized == "none":
         return SubtitlePreparationResult(subtitle_path=None, generated=False, source=None)
 
-    target = explicit_path or (Path(output_dir) / f"{stem}_en.json")
+    if output_dir is None:
+        # Default: write sidecar next to the video in a meta/ subdirectory
+        target = explicit_path or (src.parent / "meta" / f"{stem}_en.json")
+    else:
+        target = explicit_path or (Path(output_dir) / f"{stem}_en.json")
 
     errors: list[str] = []
 

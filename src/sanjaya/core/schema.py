@@ -93,6 +93,39 @@ def default_schema() -> dict[str, Any]:
     }
 
 
+_MODALITY_PROMPT = """\
+Given this question about a video, classify the primary evidence modality needed:
+- "transcript_primary": answer is mostly in what people say (quotes, summaries, \
+speaker attribution, dialogue analysis)
+- "vision_primary": answer requires looking at what's on screen (charts, products, \
+UI elements, diagrams, text overlays, physical objects, on-screen code)
+- "balanced": both transcript and visual evidence are equally important
+
+Question: {question}
+
+Return ONLY one of: transcript_primary, vision_primary, balanced
+"""
+
+_VALID_MODALITIES = {"transcript_primary", "vision_primary", "balanced"}
+
+
+def classify_question_modality(question: str, llm_client: Any) -> str:
+    """Classify whether a question needs transcript-first or vision-first analysis.
+
+    Returns one of: transcript_primary, vision_primary, balanced.
+    """
+    prompt = _MODALITY_PROMPT.format(question=question)
+    try:
+        raw = llm_client.completion(prompt).strip().lower()
+        # Extract the classification even if the LLM adds extra text
+        for modality in _VALID_MODALITIES:
+            if modality in raw:
+                return modality
+        return "balanced"
+    except Exception:
+        return "balanced"
+
+
 def schema_to_prompt_section(schema: dict[str, Any]) -> str:
     """Convert the schema to a prompt section telling the orchestrator what to produce."""
     fields = schema.get("fields", {})

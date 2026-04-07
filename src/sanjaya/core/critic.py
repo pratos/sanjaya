@@ -9,7 +9,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 CRITIC_PROMPT = """\
-You are evaluating whether an answer is complete and well-grounded.
+You are evaluating whether an answer is complete, well-grounded, and substantive.
 
 Question: {question}
 
@@ -19,7 +19,7 @@ Expected answer schema:
 Submitted answer:
 {answer}
 
-Evaluate strictly:
+Evaluate strictly on ALL six dimensions:
 1. Required fields: are all required fields filled with substantive content, \
 not placeholders or vague statements?
 2. Evidence grounding: does each claim cite a specific source reference \
@@ -28,6 +28,17 @@ not placeholders or vague statements?
 Are there obvious gaps — things the question asks for that are missing?
 4. Noise: is there unsupported speculation, filler, follow-up offers \
 ("want me to also..."), or content not requested by the question?
+5. Content quality: are individual claims specific and substantive? \
+Reject vague non-answers like "the presenter continues", "further analysis \
+needed", or "immediate continuation after the slip." Each list item must \
+contain a concrete detail (a name, number, timestamp, or specific description), \
+not just a category label or generic narration.
+6. Quote validity (if quotes or verbatim text are present): each quote must \
+be a complete, coherent utterance — not a mid-sentence fragment. A valid quote \
+starts naturally and ends at a sentence or clause boundary. Fragments like \
+"of the model are not that great among context because they never seen" are \
+NOT acceptable as standalone quotes. If suggested interpretations or overlays \
+are provided, they must accurately reflect what was said.
 
 Return a JSON object:
 {{
@@ -37,9 +48,13 @@ Return a JSON object:
   "feedback": "<one actionable sentence for the agent>"
 }}
 
-Be strict but fair. A score of 70+ means the answer is usable. \
-90+ means it is thorough with no gaps. \
-Below 50 means critical information is missing.
+Scoring guidance:
+- 70+ means usable with specific, verifiable claims.
+- 90+ means thorough with no gaps and all claims grounded.
+- Below 50 means critical information is missing.
+- Score 0-30 if the answer contains mid-sentence fragments posing as quotes, \
+vague hand-waving as descriptions, or "corrections" / "details" that don't \
+describe what actually changed or happened.
 """
 
 
@@ -49,6 +64,7 @@ def evaluate_answer(
     schema: dict[str, Any],
     critic_client: Any,
     threshold: int = 70,
+    budget: Any | None = None,
 ) -> dict[str, Any]:
     """Run the critic on a structured answer.
 
@@ -64,6 +80,19 @@ def evaluate_answer(
 
     try:
         raw = critic_client.completion(prompt)
+
+        # Track critic cost in the budget
+        if budget is not None:
+            usage = getattr(critic_client, "last_usage", None)
+            if usage:
+                cost = getattr(critic_client, "last_cost_usd", None) or 0.0
+                model = getattr(critic_client, "model", None)
+                budget.record(
+                    input_tokens=usage.input_tokens,
+                    output_tokens=usage.output_tokens,
+                    cost_usd=cost,
+                    model=str(model) if model else "critic",
+                )
         text = raw.strip()
         if text.startswith("```"):
             text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
