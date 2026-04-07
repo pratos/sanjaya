@@ -1,5 +1,8 @@
+.DS_Store
 docs/
 .claude/
+thoughts/
+sanjaya_artifacts/
 .mcp.json
 
 nbs/sanjaya_artifacts
