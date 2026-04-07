@@ -28,12 +28,31 @@ def _tokenize(text: str) -> set[str]:
     return {tok for tok in _WORD_RE.findall(text.lower()) if len(tok) > 1}
 
 
-def _overlap_score(question: str, content: str) -> float:
-    q = _tokenize(question)
+def expand_query(question: str, llm_client: Any) -> str:
+    """Use a sub-LLM to expand a question into additional search terms.
+
+    Returns the original question plus expanded keywords, concatenated
+    so that _tokenize picks up all terms for matching.
+    """
+    if llm_client is None:
+        return question
+    try:
+        expanded = llm_client.completion(
+            f"List 10 keywords and synonyms to search for in a video transcript "
+            f"to answer this question. Return ONLY the words, comma-separated, "
+            f"no explanation:\n\n{question}"
+        )
+        return f"{question} {expanded}"
+    except Exception:
+        return question
+
+
+def _overlap_score(question_tokens: set[str], content: str) -> float:
+    """Bag-of-words cosine between pre-tokenized query and content."""
     c = _tokenize(content)
-    if not q or not c:
+    if not question_tokens or not c:
         return 0.0
-    return len(q & c) / math.sqrt(len(q) * len(c))
+    return len(question_tokens & c) / math.sqrt(len(question_tokens) * len(c))
 
 
 def load_subtitle_segments(subtitle_path: str) -> list[SubtitleSegment]:
@@ -80,15 +99,19 @@ def subtitle_anchored_windows(
     subtitle_path: str,
     window_size_s: float,
     top_k: int,
+    llm_client: Any = None,
 ) -> list[dict[str, Any]]:
     """Propose windows centered around subtitle segments relevant to the question."""
     segments = load_subtitle_segments(subtitle_path)
     if not segments:
         return []
 
+    expanded = expand_query(question, llm_client)
+    q_tokens = _tokenize(expanded)
+
     proposals: list[dict[str, Any]] = []
     for index, segment in enumerate(segments):
-        score = _overlap_score(question, segment.text)
+        score = _overlap_score(q_tokens, segment.text)
         if score <= 0:
             continue
 

@@ -303,6 +303,7 @@ class VideoToolkit(Toolkit):
                     subtitle_path=toolkit._subtitle_path,
                     window_size_s=window_size_s,
                     top_k=subtitle_top,
+                    llm_client=toolkit._llm_client,
                 )
 
             sliding = sliding_windows(
