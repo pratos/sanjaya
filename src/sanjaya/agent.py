@@ -202,19 +202,14 @@ class Agent:
                 vt._captioner = self._captioner
             self._registry.register_toolkit(vt)
 
-        # Classify question modality for video analysis strategy
-        modality = "balanced"
-        if video:
-            from .core.schema import classify_question_modality
-            modality = classify_question_modality(question, self._sub_llm)
-
-        # Build context dict for toolkits
+        # Build context dict for toolkits (modality classified later, inside the
+        # completion span, so the sub_llm call shows up under sanjaya.completion)
         context_dict: dict[str, Any] = {
             "question": question,
             "context": context,
             "video": video,
             "subtitle": subtitle,
-            "modality": modality,
+            "modality": "balanced",
         }
 
         # Setup toolkits
@@ -341,6 +336,28 @@ class Agent:
 
         model_name = _model_label(self.model)
         with self._tracer.completion(question=question, model=model_name) as comp_trace:
+            # Classify question modality inside the span so the sub_llm call
+            # is nested under sanjaya.completion in traces.
+            if video:
+                from .core.schema import classify_question_modality
+                modality = classify_question_modality(question, self._sub_llm)
+                context_dict["modality"] = modality
+                # Update toolkit modality and rebuild the system prompt
+                # so the correct strategy prompt is used.
+                for toolkit in self._registry.toolkits:
+                    if hasattr(toolkit, "_modality"):
+                        toolkit._modality = modality
+                toolkit_sections = [
+                    tk.prompt_section()
+                    for tk in self._registry.toolkits
+                    if tk.prompt_section()
+                ]
+                system_prompt = build_system_prompt(
+                    registry=run_registry,
+                    context_metadata=context_metadata,
+                    toolkit_sections=toolkit_sections,
+                )
+
             # Generate answer schema for this question
             from .core.schema import generate_answer_schema, schema_to_prompt_section
 
