@@ -4,6 +4,11 @@ docs/
 thoughts/
 sanjaya_artifacts/
 .mcp.json
+x-article-site/
+x-draft-*.md
+media/
+*.mp4
+sanjaya_video.py
 
 nbs/sanjaya_artifacts
 
