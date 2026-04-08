@@ -23,37 +23,54 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-MOONDREAM_API_URL = "https://api.moondream.ai/v1/query"
+MOONDREAM_CLOUD_BASE = "https://api.moondream.ai/v1"
+MOONDREAM_STATION_BASE = "http://localhost:2020/v1"
 TOKENS_PER_IMAGE = 729
 
 
 def is_moondream_spec(model: Any) -> bool:
-    """Check if a model spec refers to Moondream."""
+    """Check if a model spec refers to Moondream (cloud or station)."""
     if isinstance(model, str):
-        return model.startswith("moondream:")
+        return model.startswith("moondream:") or model.startswith("moondream-station:")
     return isinstance(model, MoondreamVisionClient)
 
 
 class MoondreamVisionClient:
-    """Direct REST client for Moondream Cloud vision queries."""
+    """Direct REST client for Moondream Cloud or local Station.
+
+    Set ``base_url`` to point at a local Moondream Station
+    (default ``http://localhost:2020/v1``) or cloud
+    (``https://api.moondream.ai/v1``).  When targeting Station
+    the API key is optional.
+    """
 
     def __init__(
         self,
         api_key: str | None = None,
         model: str = "moondream3-preview",
-        max_workers: int = 4,
+        max_workers: int | None = None,
+        base_url: str | None = None,
     ):
         import os
 
         self._api_key = api_key or os.environ.get("MOONDREAM_API_KEY", "")
-        if not self._api_key:
+        # Determine base URL: explicit > env > cloud default
+        self._base_url = (
+            base_url
+            or os.environ.get("MOONDREAM_BASE_URL")
+            or MOONDREAM_CLOUD_BASE
+        )
+        self._is_local = "localhost" in self._base_url or "127.0.0.1" in self._base_url
+
+        if not self._api_key and not self._is_local:
             raise ValueError(
-                "Moondream API key required. Set MOONDREAM_API_KEY env var "
-                "or pass api_key= to MoondreamVisionClient."
+                "Moondream API key required for cloud. Set MOONDREAM_API_KEY env var, "
+                "pass api_key=, or point base_url= at a local Moondream Station."
             )
 
         self._model = model
-        self._max_workers = max_workers
+        # Local station can handle more concurrency; cloud rate-limits aggressively
+        self._max_workers = max_workers if max_workers is not None else (4 if self._is_local else 2)
         self._model_name = f"moondream/{model}"
 
         # Cumulative usage tracking
@@ -62,36 +79,108 @@ class MoondreamVisionClient:
         self.total_calls = 0
         self._last_had_metrics = False
 
+    def _make_request(
+        self, endpoint: str, body: dict[str, Any], *, retries: int = 2,
+    ) -> dict[str, Any]:
+        """Send a request to a Moondream API endpoint with retry."""
+        import time as _time
+
+        url = f"{self._base_url}/{endpoint.lstrip('/')}"
+        payload = json.dumps(body).encode()
+
+        headers: dict[str, str] = {
+            "Content-Type": "application/json",
+            "User-Agent": "sanjaya/0.2.0",
+        }
+        if self._api_key:
+            headers["X-Moondream-Auth"] = self._api_key
+
+        last_err: Exception | None = None
+        for attempt in range(1 + retries):
+            try:
+                req = urllib.request.Request(url, data=payload, headers=headers)
+                with urllib.request.urlopen(req, timeout=90) as resp:
+                    data = json.loads(resp.read())
+
+                # Track actual token counts from API response
+                metrics = data.get("metrics", {})
+                if metrics:
+                    self.total_input_tokens += metrics.get("input_tokens", TOKENS_PER_IMAGE)
+                    self.total_output_tokens += metrics.get("output_tokens", 0)
+                    self.total_calls += 1
+                    self._last_had_metrics = True
+
+                return data
+            except (OSError, TimeoutError) as e:
+                last_err = e
+                if attempt < retries:
+                    _time.sleep(1.5 * (attempt + 1))
+                    logger.debug("Moondream %s retry %d after %s", endpoint, attempt + 1, e)
+
+        raise last_err  # type: ignore[misc]
+
     def _query_single(self, image_b64: str, question: str) -> str:
-        """Send a single image+question to the Moondream REST API."""
-        payload = json.dumps({
+        """Send a single image+question to the Moondream query endpoint."""
+        data = self._make_request("query", {
             "image_url": f"data:image/jpeg;base64,{image_b64}",
             "question": question,
             "model": self._model,
-        }).encode()
-
-        req = urllib.request.Request(
-            MOONDREAM_API_URL,
-            data=payload,
-            headers={
-                "X-Moondream-Auth": self._api_key,
-                "Content-Type": "application/json",
-                "User-Agent": "sanjaya/0.2.0",
-            },
-        )
-
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            data = json.loads(resp.read())
-
-        # Track actual token counts from API response
-        metrics = data.get("metrics", {})
-        if metrics:
-            self.total_input_tokens += metrics.get("input_tokens", TOKENS_PER_IMAGE)
-            self.total_output_tokens += metrics.get("output_tokens", 0)
-            self.total_calls += 1
-            self._last_had_metrics = True
-
+        })
         return data.get("answer", data.get("result", str(data)))
+
+    def caption_frame(
+        self,
+        image_path: str | Path,
+        *,
+        length: str = "normal",
+    ) -> str:
+        """Caption a single frame using the /caption endpoint.
+
+        Args:
+            image_path: Path to a JPEG frame.
+            length: Caption detail level — "short" (1-2 sentences) or
+                    "normal" (detailed description).
+        """
+        b64 = self._load_and_encode(Path(image_path))
+        data = self._make_request("caption", {
+            "image_url": f"data:image/jpeg;base64,{b64}",
+            "length": length,
+            "model": self._model,
+            "stream": False,
+        })
+        return data.get("caption", data.get("result", str(data)))
+
+    def caption_frames_batch(
+        self,
+        frame_paths: list[str],
+        *,
+        length: str = "normal",
+    ) -> list[str]:
+        """Caption multiple frames concurrently via the /caption endpoint."""
+        valid = [Path(p) for p in frame_paths if Path(p).exists()]
+        if not valid:
+            return []
+
+        def _caption_one(idx: int, path: Path) -> tuple[int, str]:
+            return idx, self.caption_frame(str(path), length=length)
+
+        captions: dict[int, str] = {}
+        workers = min(self._max_workers, len(valid))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {
+                pool.submit(_caption_one, i, p): i
+                for i, p in enumerate(valid)
+            }
+            for fut in as_completed(futures):
+                try:
+                    idx, caption = fut.result()
+                    captions[idx] = caption
+                except Exception as e:
+                    idx = futures[fut]
+                    captions[idx] = f"[caption error: {e}]"
+                    logger.warning("Moondream caption failed for frame %d: %s", idx, e)
+
+        return [captions[i] for i in range(len(valid))]
 
     def _load_and_encode(self, path: Path) -> str:
         """Read a JPEG file and return its base64 encoding."""

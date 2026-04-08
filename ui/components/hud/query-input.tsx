@@ -23,10 +23,11 @@ interface RunParams {
 
 interface QueryInputProps {
   onSubmit: (params: RunParams) => void;
+  onVideoChange?: (videoPath: string) => void;
   disabled: boolean;
 }
 
-export function QueryInput({ onSubmit, disabled }: QueryInputProps) {
+export function QueryInput({ onSubmit, onVideoChange, disabled }: QueryInputProps) {
   const [videos, setVideos] = useState<VideoEntry[]>([]);
   const [videoPath, setVideoPath] = useState("");
   const [question, setQuestion] = useState("");
@@ -42,9 +43,13 @@ export function QueryInput({ onSubmit, disabled }: QueryInputProps) {
     fetchVideos()
       .then((list) => {
         setVideos(list);
-        if (list.length > 0) setVideoPath(list[0].path);
+        if (list.length > 0) {
+          setVideoPath(list[0].path);
+          onVideoChange?.(list[0].path);
+        }
       })
       .catch((err) => setLoadError(err.message));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleSubmit = () => {
@@ -84,7 +89,10 @@ export function QueryInput({ onSubmit, disabled }: QueryInputProps) {
             <div className="flex gap-2">
               <select
                 value={videoPath}
-                onChange={(e) => setVideoPath(e.target.value)}
+                onChange={(e) => {
+                  setVideoPath(e.target.value);
+                  onVideoChange?.(e.target.value);
+                }}
                 disabled={disabled || videos.length === 0}
                 className={`flex-1 ${selectClass}`}
               >

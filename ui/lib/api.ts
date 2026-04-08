@@ -53,6 +53,14 @@ export async function fetchRunManifest(runId: string): Promise<RunManifest | nul
   return res.json();
 }
 
+import type { BenchmarkData } from "./types";
+
+export async function fetchBenchmarks(): Promise<BenchmarkData> {
+  const res = await fetch("/api/benchmarks");
+  if (!res.ok) throw new Error("Failed to fetch benchmarks");
+  return res.json();
+}
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export interface RunRequest {
@@ -142,19 +150,30 @@ export function streamEvents(
     }
   };
 
-  // Listen to all named event types we care about
+  // Listen to all named event types we care about.
+  // Includes both legacy names and mapped names from the backend _KIND_MAP.
   const eventTypes = [
     "run_start",
     "run_end",
     "transcription",
     "root_response",
+    "root_response_start",
     "code_instruction",
     "code_execution",
     "retrieval",
     "clip",
     "frames",
     "vision",
+    "vision_start",
     "sub_llm",
+    "sub_llm_start",
+    "iteration_start",
+    "iteration_end",
+    "tool_call",
+    "tool_call_start",
+    "schema_generation",
+    "schema_generation_start",
+    "critic_evaluation",
     "heartbeat",
     "stream_end",
     "stream_error",

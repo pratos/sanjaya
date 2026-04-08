@@ -8,6 +8,9 @@ interface FinalAnswerPanelProps {
   finalStatus: string | null;
   question: string | null;
   events: TraceEvent[];
+  iterations: number;
+  costUsd: number;
+  wallTimeS: number;
 }
 
 function deriveEvidence(events: TraceEvent[]) {
@@ -48,12 +51,22 @@ function deriveEvidence(events: TraceEvent[]) {
   return evidence;
 }
 
+function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${seconds.toFixed(1)}s`;
+  const m = Math.floor(seconds / 60);
+  const s = Math.round(seconds % 60);
+  return `${m}m ${s}s`;
+}
+
 export function FinalAnswerPanel({
   status,
   finalAnswer,
   finalStatus,
   question,
   events,
+  iterations,
+  costUsd,
+  wallTimeS,
 }: FinalAnswerPanelProps) {
   // Only show when complete or error
   if (status !== "complete" && status !== "error") return null;
@@ -93,6 +106,24 @@ export function FinalAnswerPanel({
       </div>
 
       <div className="p-4 space-y-4">
+        {/* Stats row */}
+        {!isError && (
+          <div className="flex gap-6 text-[10px]">
+            <div>
+              <span className="text-hud-dim uppercase tracking-wider">Iterations </span>
+              <span className="text-foreground font-bold tabular-nums">{iterations}</span>
+            </div>
+            <div>
+              <span className="text-hud-dim uppercase tracking-wider">Time </span>
+              <span className="text-foreground font-bold tabular-nums">{formatDuration(wallTimeS)}</span>
+            </div>
+            <div>
+              <span className="text-hud-dim uppercase tracking-wider">Cost </span>
+              <span className="text-hud-amber font-bold tabular-nums">${costUsd.toFixed(4)}</span>
+            </div>
+          </div>
+        )}
+
         {/* Question */}
         {question && (
           <div>

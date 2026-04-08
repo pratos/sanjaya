@@ -14,6 +14,9 @@ dependencies = [
     "genai-prices>=0.0.56",
     "nest-asyncio>=1.6.0",
     "moondream-station>=0.1.9",
+    "parakeet-mlx>=0.5.1",
+    "fastapi>=0.135.3",
+    "uvicorn>=0.43.0",
 ]
 
 [project.optional-dependencies]

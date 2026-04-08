@@ -44,20 +44,37 @@ export function useRun() {
           updates.maxIterations =
             (p.max_iterations as number) ?? prev.maxIterations;
           updates.orchestratorModel =
-            (p.orchestrator_model as string) ?? null;
+            (p.orchestrator_model as string) ?? (p.model as string) ?? null;
           updates.recursiveModel = (p.recursive_model as string) ?? null;
           break;
 
-        case "root_response":
+        case "iteration_start":
+        case "iteration_end":
           updates.currentIteration = (p.iteration as number) ?? prev.currentIteration;
+          if (p.final_answer) {
+            updates.finalAnswer = p.final_answer as string;
+            updates.finalStatus = p.forced_answer ? "forced_final_answer" : "final_answer";
+          }
+          break;
+
+        case "root_response":
+          // root_llm_call_end — carries response_preview, tokens, etc.
+          updates.currentIteration = (p.iteration as number) ?? prev.currentIteration;
+          if (p.model) {
+            updates.orchestratorModel = p.model as string;
+          }
           break;
 
         case "run_end": {
-          const status = p.status as string;
-          updates.status =
-            status === "error" ? "error" : "complete";
-          updates.finalAnswer = (p.answer_full as string) ?? (p.answer_preview as string) ?? null;
-          updates.finalStatus = status;
+          // sanjaya.completion_end — run finished successfully
+          updates.status = "complete";
+          updates.finalAnswer =
+            (p.final_answer as string) ??
+            (p.answer_full as string) ??
+            (p.answer_preview as string) ??
+            (p.response_preview as string) ??
+            prev.finalAnswer;
+          updates.finalStatus = prev.finalStatus ?? "final_answer";
           break;
         }
 
@@ -157,16 +174,19 @@ function deriveTokenTotals(events: TraceEvent[]): TokenTotals {
   let totalTokens = 0;
   let costUsd = 0;
 
+  const tokenEventKinds = new Set([
+    "root_response", "sub_llm", "vision",
+    "schema_generation", "critic_evaluation",
+  ]);
+
   for (const e of events) {
-    if (
-      e.kind === "root_response" ||
-      e.kind === "sub_llm" ||
-      e.kind === "vision"
-    ) {
+    if (tokenEventKinds.has(e.kind)) {
       const p = e.payload;
-      inputTokens += (p.input_tokens as number) ?? 0;
-      outputTokens += (p.output_tokens as number) ?? 0;
-      totalTokens += (p.total_tokens as number) ?? 0;
+      const inp = (p.input_tokens as number) ?? 0;
+      const out = (p.output_tokens as number) ?? 0;
+      inputTokens += inp;
+      outputTokens += out;
+      totalTokens += (p.total_tokens as number) ?? (inp + out);
       costUsd += (p.cost_usd as number) ?? 0;
     }
   }
@@ -177,29 +197,35 @@ function deriveTokenTotals(events: TraceEvent[]): TokenTotals {
 function deriveCodeExecutions(events: TraceEvent[]): CodeExecution[] {
   return events
     .filter((e) => e.kind === "code_execution")
-    .map((e) => ({
-      iteration: (e.payload.iteration as number) ?? 0,
-      codeBlockIndex: (e.payload.code_block_index as number) ?? 0,
-      codeBlockTotal: (e.payload.code_block_total as number) ?? 0,
-      code: (e.payload.code_content as string) ?? (e.payload.code_preview as string) ?? "",
-      executionTime: (e.payload.execution_time as number) ?? 0,
-      stderr: (e.payload.stderr_preview as string) ?? "",
-      hasFinalAnswer: (e.payload.has_final_answer as boolean) ?? false,
-    }));
+    .map((e) => {
+      const p = e.payload;
+      return {
+        iteration: (p.iteration as number) ?? (p.block_index as number) ?? 0,
+        codeBlockIndex: (p.code_block_index as number) ?? (p.block_index as number) ?? 0,
+        codeBlockTotal: (p.code_block_total as number) ?? 0,
+        code: (p.code as string) ?? (p.code_content as string) ?? (p.code_preview as string) ?? "",
+        executionTime: (p.execution_time as number) ?? (p.execution_time_s as number) ?? 0,
+        stderr: (p.stderr as string) ?? (p.stderr_preview as string) ?? "",
+        hasFinalAnswer: (p.has_final_answer as boolean) ?? (p.final_answer != null),
+      };
+    });
 }
 
 function deriveSubLLMCalls(events: TraceEvent[]): SubLLMCall[] {
   return events
     .filter((e) => e.kind === "sub_llm")
-    .map((e) => ({
-      promptPreview: (e.payload.prompt_preview as string) ?? "",
-      responsePreview: (e.payload.response_preview as string) ?? "",
-      inputTokens: (e.payload.input_tokens as number) ?? null,
-      outputTokens: (e.payload.output_tokens as number) ?? null,
-      costUsd: (e.payload.cost_usd as number) ?? null,
-      modelUsed: (e.payload.model_used as string) ?? null,
-      durationSeconds: (e.payload.duration_seconds as number) ?? null,
-    }));
+    .map((e) => {
+      const p = e.payload;
+      return {
+        promptPreview: (p.prompt_preview as string) ?? (p.prompt_content as string)?.slice(0, 200) ?? "",
+        responsePreview: (p.response_preview as string) ?? "",
+        inputTokens: (p.input_tokens as number) ?? null,
+        outputTokens: (p.output_tokens as number) ?? null,
+        costUsd: (p.cost_usd as number) ?? null,
+        modelUsed: (p.model_used as string) ?? (p.model as string) ?? null,
+        durationSeconds: (p.duration_seconds as number) ?? null,
+      };
+    });
 }
 
 function deriveClips(events: TraceEvent[]): ClipEntry[] {
@@ -231,15 +257,20 @@ function deriveClips(events: TraceEvent[]): ClipEntry[] {
 function deriveVisionQueries(events: TraceEvent[]): VisionEntry[] {
   return events
     .filter((e) => e.kind === "vision")
-    .map((e) => ({
-      prompt: (e.payload.prompt as string) ?? "",
-      frameCount: (e.payload.frame_count as number) ?? 0,
-      clipCount: (e.payload.clip_count as number) ?? 0,
-      responsePreview: (e.payload.response_preview as string) ?? "",
-      inputTokens: (e.payload.input_tokens as number) ?? null,
-      outputTokens: (e.payload.output_tokens as number) ?? null,
-      costUsd: (e.payload.cost_usd as number) ?? null,
-      modelUsed: (e.payload.model_used as string) ?? null,
-      durationSeconds: (e.payload.duration_seconds as number) ?? null,
-    }));
+    .map((e) => {
+      const p = e.payload;
+      return {
+        prompt: (p.prompt as string) ?? (p.prompt_content as string)?.slice(0, 200) ?? "",
+        frameCount: (p.frame_count as number) ?? (p.n_frames as number) ?? 0,
+        clipCount: (p.clip_count as number) ?? 0,
+        responsePreview: (p.response_preview as string) ?? "",
+        inputTokens: (p.input_tokens as number) ?? null,
+        outputTokens: (p.output_tokens as number) ?? null,
+        costUsd: (p.cost_usd as number) ?? null,
+        modelUsed: (p.model_used as string) ?? (p.model as string) ?? null,
+        durationSeconds: (p.duration_seconds as number) ?? null,
+        framePaths: (p.frame_paths as string[]) ?? [],
+        clipId: (p.clip_id as string) ?? null,
+      };
+    });
 }

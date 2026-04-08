@@ -100,14 +100,6 @@ def _compute_cost(model_name: str, input_tokens: int, output_tokens: int) -> flo
     return None
 
 
-def _has_running_loop() -> bool:
-    """Check if we're inside a running event loop (e.g. Jupyter)."""
-    try:
-        asyncio.get_running_loop()
-        return True
-    except RuntimeError:
-        return False
-
 
 def _moondream_cost(input_tokens: int, output_tokens: int) -> float:
     """Compute Moondream cost at $0.30/1M input, $2.50/1M output."""
@@ -134,15 +126,20 @@ class LLMClient:
 
         # Moondream direct client (bypasses pydantic-ai for vision)
         self._moondream: Any = None
-        from .moondream import MoondreamVisionClient, is_moondream_spec
+        from .moondream import MOONDREAM_STATION_BASE, MoondreamVisionClient, is_moondream_spec
         if is_moondream_spec(self.vision_model):
             if isinstance(self.vision_model, MoondreamVisionClient):
                 self._moondream = self.vision_model
             else:
-                # Parse "moondream:model-name" spec
-                model_id = self.vision_model.split(":", 1)[1] if ":" in str(self.vision_model) else "moondream3-preview"
+                # Parse "moondream:model-name" or "moondream-station:model-name"
+                spec = str(self.vision_model)
+                use_station = spec.startswith("moondream-station:")
+                model_id = spec.split(":", 1)[1] if ":" in spec else "moondream3-preview"
                 try:
-                    self._moondream = MoondreamVisionClient(model=model_id)
+                    self._moondream = MoondreamVisionClient(
+                        model=model_id,
+                        base_url=MOONDREAM_STATION_BASE if use_station else None,
+                    )
                 except Exception:
                     pass  # Fall back to pydantic-ai path
 
@@ -326,8 +323,8 @@ class LLMClient:
             except Exception:
                 pass
 
-        for frame_path in valid_frames[:8]:
-            data = _compress_frame(frame_path, max_dim=768, quality=60)
+        for frame_path in valid_frames[:16]:
+            data = _compress_frame(frame_path, max_dim=768, quality=80)
             user_content.append(
                 BinaryContent(data=data, media_type="image/jpeg")
             )
@@ -337,30 +334,29 @@ class LLMClient:
 
         return user_content
 
-    def _run_agent(self, model: ModelSpec, payload: Any) -> tuple[str, Any]:
+    def _run_agent(self, model: ModelSpec, payload: Any, timeout: int = 300) -> tuple[str, Any]:
         model_label = model if isinstance(model, str) else getattr(model, "model_name", "unknown")
         agent = Agent(model=model, output_type=str, retries=1, defer_model_check=True, name=f"sanjaya:{self.name}:{model_label}")
 
-        if _has_running_loop():
-            # Inside Jupyter: schedule the coroutine on a persistent background
-            # loop so the AsyncOpenAI client's connection pool stays alive.
-            # Propagate OTel context so spans nest correctly under the caller.
-            from opentelemetry import context as otel_context
+        # Always use the persistent background loop so the AsyncOpenAI
+        # client's connection pool stays alive for TLS cleanup.  Using
+        # run_sync / asyncio.run creates a throwaway loop that closes
+        # before httpx can clean up, causing "Event loop is closed".
+        # Propagate OTel context so spans nest correctly under the caller.
+        from opentelemetry import context as otel_context
 
-            parent_ctx = otel_context.get_current()
+        parent_ctx = otel_context.get_current()
 
-            async def _run_with_context():
-                token = otel_context.attach(parent_ctx)
-                try:
-                    return await agent.run(payload)
-                finally:
-                    otel_context.detach(token)
+        async def _run_with_context():
+            token = otel_context.attach(parent_ctx)
+            try:
+                return await asyncio.wait_for(agent.run(payload), timeout=timeout)
+            finally:
+                otel_context.detach(token)
 
-            loop = _get_bg_loop()
-            future = asyncio.run_coroutine_threadsafe(_run_with_context(), loop)
-            result = future.result()
-        else:
-            result = agent.run_sync(payload)
+        loop = _get_bg_loop()
+        future = asyncio.run_coroutine_threadsafe(_run_with_context(), loop)
+        result = future.result(timeout=timeout)
 
         response = result.output if hasattr(result, "output") else str(result)
         return str(response), result
@@ -460,53 +456,58 @@ class LLMClient:
         self.last_call_metadata = meta
         return meta
 
-    def _call(self, model: ModelSpec, payload: Any, timeout: int = 300) -> str:
-        """Core call with fallback."""
-        _ = timeout  # Reserved for future provider-specific timeout support
+    def _call(self, model: ModelSpec, payload: Any, timeout: int = 300, max_retries: int = 2) -> str:
+        """Core call with timeout, retry, and fallback."""
         start = time.time()
         self.last_usage = None
         self.last_call_metadata = None
 
-        try:
-            response, result = self._run_agent(model, payload)
-            self._capture_usage(result)
-            self._capture_metadata(model, result, start)
-            return response
-        except Exception as primary_err:
-            if not self.fallback_model:
-                raise
+        last_err: Exception | None = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                response, result = self._run_agent(model, payload, timeout=timeout)
+                self._capture_usage(result)
+                self._capture_metadata(model, result, start)
+                return response
+            except Exception as err:
+                last_err = err
+                if attempt < max_retries:
+                    import time as _time
+                    _time.sleep(min(2 ** attempt, 8))
+                    continue
+                break
 
-            # Fallback
-            response, result = self._run_agent(self.fallback_model, payload)
-            self._capture_usage(result)
-            meta = self._capture_metadata(self.fallback_model, result, start, fallback_used=True)
-            meta.primary_error = str(primary_err)
-            return response
+        # All retries exhausted — try fallback model
+        if self.fallback_model and last_err is not None:
+            try:
+                response, result = self._run_agent(self.fallback_model, payload, timeout=timeout)
+                self._capture_usage(result)
+                meta = self._capture_metadata(self.fallback_model, result, start, fallback_used=True)
+                meta.primary_error = str(last_err)
+                return response
+            except Exception:
+                pass
+
+        if last_err is not None:
+            raise last_err
+        raise RuntimeError("Unreachable")
 
     def _run_batched(self, calls: list[dict[str, Any]]) -> list[str]:
         """Run multiple calls concurrently."""
+        from opentelemetry import context as otel_context
+        parent_ctx = otel_context.get_current()
 
-        if _has_running_loop():
-            from opentelemetry import context as otel_context
-            parent_ctx = otel_context.get_current()
-
-            async def _gather():
-                token = otel_context.attach(parent_ctx)
-                try:
-                    tasks = [self._run_agent_async(c["model"], c["payload"]) for c in calls]
-                    return await asyncio.gather(*tasks, return_exceptions=True)
-                finally:
-                    otel_context.detach(token)
-
-            loop = _get_bg_loop()
-            future = asyncio.run_coroutine_threadsafe(_gather(), loop)
-            raw_results = future.result()
-        else:
-            async def _gather():
+        async def _gather():
+            token = otel_context.attach(parent_ctx)
+            try:
                 tasks = [self._run_agent_async(c["model"], c["payload"]) for c in calls]
                 return await asyncio.gather(*tasks, return_exceptions=True)
+            finally:
+                otel_context.detach(token)
 
-            raw_results = asyncio.run(_gather())
+        loop = _get_bg_loop()
+        future = asyncio.run_coroutine_threadsafe(_gather(), loop)
+        raw_results = future.result()
 
         responses: list[str] = []
         for r in raw_results:

@@ -83,6 +83,7 @@ class Agent:
         model: ModelSpec = "openrouter:openai/gpt-5.3-codex",
         sub_model: ModelSpec = "openrouter:openai/gpt-4.1-mini",
         vision_model: ModelSpec | None = None,
+        caption_model: ModelSpec | None = None,
         fallback_model: ModelSpec | None = None,
         critic_model: ModelSpec | None = "openrouter:qwen/qwen3-30b-a3b-thinking-2507",
         *,
@@ -106,6 +107,7 @@ class Agent:
         self.model = model
         self.sub_model = sub_model
         self.vision_model = vision_model
+        self.caption_model = caption_model
         self.fallback_model = fallback_model
         self.max_iterations = max_iterations
         self.max_budget_usd = max_budget_usd
@@ -126,6 +128,22 @@ class Agent:
             name="sub_llm",
         )
         self._critic = LLMClient(model=critic_model, name="critic") if critic_model else None
+
+        # Captioner (separate from sub_llm — used only by caption_frames)
+        self._captioner: Any = None
+        if caption_model is not None:
+            from .llm.moondream import MOONDREAM_STATION_BASE, MoondreamVisionClient, is_moondream_spec
+            if is_moondream_spec(caption_model):
+                spec = str(caption_model)
+                use_station = spec.startswith("moondream-station:")
+                model_id = spec.split(":", 1)[1] if ":" in spec else "moondream3-preview"
+                try:
+                    self._captioner = MoondreamVisionClient(
+                        model=model_id,
+                        base_url=MOONDREAM_STATION_BASE if use_station else None,
+                    )
+                except Exception:
+                    pass
 
         # Tool registry
         self._registry = ToolRegistry()
@@ -153,6 +171,8 @@ class Agent:
                     item._tracer = self._tracer
                 if hasattr(item, "_budget"):
                     item._budget = self._budget
+                if hasattr(item, "_captioner") and self._captioner is not None:
+                    item._captioner = self._captioner
                 self._registry.register_toolkit(item)
             elif isinstance(item, Tool):
                 self._registry.register(item)
@@ -178,6 +198,8 @@ class Agent:
             vt._llm_client = self._sub_llm
             vt._tracer = self._tracer
             vt._budget = self._budget
+            if self._captioner is not None:
+                vt._captioner = self._captioner
             self._registry.register_toolkit(vt)
 
         # Classify question modality for video analysis strategy

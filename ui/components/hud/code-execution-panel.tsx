@@ -27,14 +27,14 @@ export function CodeExecutionPanel({
     <Panel
       title="CODE EXECUTION LOG"
       status={isRunning && executions.length > 0 ? "active" : undefined}
-      className=""
+      className="h-full flex flex-col"
     >
       {executions.length === 0 ? (
         <span className="text-[10px] uppercase tracking-wider text-hud-dim">
           NO DATA YET
         </span>
       ) : (
-        <div ref={scrollRef} className="space-y-2 text-[10px] overflow-auto max-h-full">
+        <div ref={scrollRef} className="space-y-2 text-[10px] overflow-y-auto flex-1 min-h-0">
           {executions.map((exec, i) => (
             <div key={i} className="border border-hud-border">
               {/* Header */}

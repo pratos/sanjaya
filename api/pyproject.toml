@@ -7,11 +7,11 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]",
     "sse-starlette>=2.0",
-    "video-rlm",
+    "sanjaya",
 ]
 
 [tool.uv.sources]
-video-rlm = { path = ".." }
+sanjaya = { path = ".." }
 
 [build-system]
 requires = ["setuptools>=78"]

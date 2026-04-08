@@ -190,12 +190,13 @@ def run_prompt(prompt: dict, max_iterations: int = 20) -> dict:
     agent = Agent(
         model="openai/gpt-5.3-codex",
         sub_model="openai/gpt-4.1-mini",
+        caption_model="moondream:moondream3-preview",
         provider=provider,
         max_iterations=max_iterations,
         tracing=True,
     )
 
-    vt = VideoToolkit(max_frames_per_clip=4)
+    vt = VideoToolkit(max_frames_per_clip=8)
     agent.use(vt)
 
     print(f"\n{'=' * 60}")
@@ -230,6 +231,11 @@ def run_prompt(prompt: dict, max_iterations: int = 20) -> dict:
         "subtitle_source": "existing" if has_existing_sub else ("whisper_local" if subtitle_generated else "none"),
     }
 
+    # Collect trace events from the agent's tracer
+    trace_events = []
+    if hasattr(agent, "_tracer") and agent._tracer is not None:
+        trace_events = agent._tracer.dump_events()
+
     result = {
         "prompt_id": prompt["id"],
         "prompt_name": prompt["name"],
@@ -245,6 +251,7 @@ def run_prompt(prompt: dict, max_iterations: int = 20) -> dict:
         "evidence_count": len(answer.evidence),
         "evidence_sources": [e.source for e in answer.evidence],
         "subtitle": subtitle_info,
+        "trace_events": trace_events,
     }
 
     print(f"\n--- Result ---")

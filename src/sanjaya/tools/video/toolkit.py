@@ -15,80 +15,94 @@ from .media import sample_frames as _sample_frames_impl
 from .mount import WorkspaceMount
 from .retrieval import hybrid_merge, load_subtitle_segments, sliding_windows, subtitle_anchored_windows
 from .transcription import ensure_subtitle_sidecar
-from .vision import make_vision_query_batched_fn, make_vision_query_fn
+from .vision import make_caption_frames_fn, make_vision_query_batched_fn, make_vision_query_fn
 from .workspace import ArtifactWorkspace
 
 _console = Console()
 
 _VIDEO_STRATEGY_PROMPT = """\
-## Video Analysis Strategy
+## Available Tools
 
-You are analyzing a video. Your job is to build a thorough, specific answer
-by combining transcript evidence with visual confirmation.
+You are analyzing a video. You decide the strategy.
 
-### Before you write any code, THINK:
-What specific details would make a great answer to this question?
-For a summary: who is speaking, what are they doing, what tools/concepts appear?
-For a factual question: what keywords, names, or events should you search for?
+### Vision tools (two modes — choose based on need):
 
-Let the question guide your searches — don't just use generic keywords.
+- **caption_frames(clip_id)** — cheap per-frame captioning via a focused vision model.
+  Returns timestamped text like `["[12.5s] Presenter showing bar chart..."]`.
+  Best for broad visual coverage. Feed the output to llm_query() for reasoning.
 
-### Workflow (aim for 3 iterations, max 1 code block per response):
+- **vision_query(prompt, clip_id)** — sends all frames in a clip to a vision model
+  with your prompt. More expensive but lets you ask targeted questions about specific
+  visual details (e.g. "read the exact text on this chart", "what color is the button").
 
-**Iteration 1: Explore and extract.**
-In a single code block: get_video_info(), run several search_transcript() calls
-with varied and specific queries, list_windows(), extract_clip() + sample_frames()
-for the top 2-3 windows. Print everything.
+### Text tools:
 
-**Iteration 2: Visual analysis + gap-filling.**
-Read what iteration 1 found. Run vision_query_batched() on your clips.
-If the transcript revealed names, topics, or details you haven't explored yet,
-run additional targeted searches. Print all results.
+- **search_transcript(query)** — BM25 keyword search over subtitles. Fast.
+  Returns matching segments with timestamps and scores.
 
-**Iteration 3: Synthesize and answer.**
-Read all accumulated evidence. Call done(answer) with a thorough response that
-cites specific timestamps, quotes, visual observations, and names.
+- **llm_query(prompt)** — text-only reasoning. Feed it captions, transcript
+  excerpts, or any accumulated evidence. Cheap, sees everything at once.
+  Good for synthesis and cross-referencing.
 
-### Key principles:
-- 2-3 clips is enough. Do NOT over-extract.
-- Vary your search queries: try specific terms, phrases, names, not just generic words.
-- The transcript is your richest signal — mine it thoroughly before relying on vision.
-- Always visually verify at least one claim before calling done().
+### Media tools:
+
+- **get_video_info()** — video metadata (duration, resolution, codec).
+- **extract_clip(window_id= or start_s=/end_s=)** — cut a clip from the video.
+- **sample_frames(clip_id=, max_frames=)** — extract uniformly-spaced frames from a clip.
+- **list_windows()** — ranked candidate temporal windows (progressive: visited ones auto-excluded).
+- **get_state()** — inspect accumulated clips, windows, coverage.
+
+### When to use what:
+
+- Broad visual understanding → caption_frames() + llm_query() over the captions
+- Specific visual detail (read text, check UI element) → vision_query() with a targeted prompt
+- Factual / dialogue questions → search_transcript() + llm_query()
+- Always: explore before answering, cite timestamps, print results so you can read them.
+
+### One code block per response. Print everything.
 """
 
 
 _VISION_FIRST_STRATEGY_PROMPT = """\
-## Video Analysis Strategy (Vision-First)
+## Available Tools (Vision-Primary Question)
 
 You are analyzing a video where the answer is primarily VISUAL — on-screen content,
 products, diagrams, charts, UI elements, code, or physical objects.
 
-### Workflow (aim for 3 iterations, EXACTLY 1 code block per response):
+### Vision tools (two modes — choose based on need):
 
-**Iteration 1: Dense visual sampling.**
-In a SINGLE code block: get_video_info(), extract 5-6 clips spread across the video
-(evenly spaced to cover the full duration), sample_frames() on each with max_frames=12,
-then run vision_query_batched() on all clips. Also do 2-3 search_transcript() calls
-for supplementary context. Print everything so you can read the results.
+- **caption_frames(clip_id)** — cheap per-frame captioning. Returns timestamped
+  descriptions. Best for scanning large portions of the video quickly.
+  Feed results to llm_query() for reasoning across many frames.
 
-**Iteration 2: Targeted deep dives.**
-Read what iteration 1 found. For the most relevant visual regions, extract more clips
-for closer inspection. Use transcript to cross-reference specific visual claims.
-Run additional vision queries with specific prompts about what you need to verify.
+- **vision_query(prompt, clip_id)** — targeted visual question. Sends frames
+  directly with your prompt. Use when you need to read specific text, verify
+  a detail, or ask about something the captions missed.
 
-**Iteration 3: Synthesize and answer.**
-Read all accumulated evidence. Call done(answer) with a thorough response that
-cites specific timestamps, visual observations, and transcript quotes.
+### Text tools:
 
-### Key principles:
-- EXACTLY ONE code block per response. Never split into multiple blocks.
-- VISION IS YOUR PRIMARY EVIDENCE SOURCE for this question.
-- Sample densely: 12 frames per clip, 5-6 clips minimum in iteration 1.
-- Describe what you SEE on screen: text, UI elements, products, diagrams, code.
-- Use transcript as secondary confirmation, not the primary signal.
-- Always cite the timestamp range for each visual observation.
-- Print all tool results so you can read them in the next iteration.
-- Do NOT call done() until you have actual visual evidence to report.
+- **search_transcript(query)** — keyword search over subtitles. Use as
+  secondary confirmation for visual observations.
+
+- **llm_query(prompt)** — text-only reasoning over captions and transcript.
+
+### Media tools:
+
+- **get_video_info()** — video metadata.
+- **extract_clip(window_id= or start_s=/end_s=)** — cut a clip.
+- **sample_frames(clip_id=, max_frames=)** — extract frames from a clip.
+- **list_windows()** — ranked candidate windows (progressive scanning).
+- **get_state()** — inspect accumulated state.
+
+### When to use what:
+
+- Dense visual coverage → extract clips across the video, caption_frames() each, llm_query() to synthesize
+- Specific visual verification → vision_query() with a precise prompt about what to look for
+- Transcript is secondary for this question — use it to confirm, not to lead
+- Sample densely: more clips and frames gives better visual coverage
+- Always: explore before answering, cite timestamps, print results so you can read them.
+
+### One code block per response. Print everything.
 """
 
 
@@ -126,6 +140,7 @@ class VideoToolkit(Toolkit):
         self._workspace: ArtifactWorkspace | None = None
         self._mount: WorkspaceMount | None = None
         self._llm_client: Any = None  # Set by Agent before setup
+        self._captioner: Any = None  # Set by Agent before setup (Moondream or similar)
         self._tracer: Any = None  # Set by Agent before setup
         self._budget: Any = None  # Set by Agent before setup
 
@@ -227,6 +242,7 @@ class VideoToolkit(Toolkit):
             self._make_list_windows_tool(),
             self._make_extract_clip_tool(),
             self._make_sample_frames_tool(),
+            self._make_caption_frames_tool(),
             self._make_vision_query_tool(),
             self._make_vision_query_batched_tool(),
             self._make_get_state_tool(),
@@ -542,6 +558,44 @@ class VideoToolkit(Toolkit):
                 "clip_id": ToolParam(name="clip_id", type_hint="str | None", default=None, description="ID from extract_clip()."),
                 "clip_path": ToolParam(name="clip_path", type_hint="str | None", default=None, description="Direct path (alternative to clip_id)."),
                 "max_frames": ToolParam(name="max_frames", type_hint="int", default=default_max, description="Number of frames to extract."),
+            },
+            return_type="list[str]",
+        )
+
+    def _make_caption_frames_tool(self) -> Tool:
+        toolkit = self
+
+        if self._llm_client:
+            fn = make_caption_frames_fn(
+                llm_client=self._llm_client,
+                captioner=self._captioner,
+                get_clips=lambda: toolkit._clips,
+                get_tracer=lambda: toolkit._tracer,
+                get_budget=lambda: toolkit._budget,
+            )
+        else:
+            def fn(**kwargs: Any) -> list[str]:  # type: ignore[misc]
+                raise RuntimeError("Vision model not configured. Set vision_model on the Agent.")
+
+        return Tool(
+            name="caption_frames",
+            description=(
+                "Caption each frame in a clip individually using a focused vision model. "
+                "Returns timestamped descriptions like '[12.5s] Presenter shows bar chart'. "
+                "Cheap and concurrent — use for broad visual coverage, then feed results "
+                "to llm_query() for reasoning. "
+                "IMPORTANT: call sample_frames() on the clip first."
+            ),
+            fn=fn,
+            parameters={
+                "clip_id": ToolParam(
+                    name="clip_id", type_hint="str",
+                    description="ID from extract_clip().",
+                ),
+                "prompt": ToolParam(
+                    name="prompt", type_hint="str | None", default=None,
+                    description="Custom captioning prompt (default: focused scene description).",
+                ),
             },
             return_type="list[str]",
         )

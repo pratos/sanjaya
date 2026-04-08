@@ -4,6 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
+_CAPTION_PROMPT = (
+    "Describe what you see in this video frame in 1-2 sentences. "
+    "Focus on: people, actions, text on screen, UI elements, "
+    "diagrams, code, and setting. Be specific about any text you can read."
+)
+
 
 def _record_vision_budget(llm_client: Any, get_budget: Any) -> None:
     """Record vision call cost in the budget tracker if available."""
@@ -78,6 +84,8 @@ def make_vision_query_fn(
                 prompt_chars=len(effective_prompt),
                 n_frames=n_frames,
                 clip_id=clip_id or "",
+                frame_paths=collected_frames[:12],
+                clip_paths=collected_clips,
             ) as ctx:
                 result = llm_client.vision_completion(
                     prompt=effective_prompt,
@@ -103,6 +111,147 @@ def make_vision_query_fn(
             return result
 
     return vision_query
+
+
+def make_caption_frames_fn(
+    *,
+    llm_client: Any,  # LLMClient
+    captioner: Any = None,  # Dedicated captioner (e.g. MoondreamVisionClient)
+    get_clips: Any,  # Callable that returns clips dict
+    get_tracer: Any = None,  # Callable that returns Tracer or None
+    get_budget: Any = None,  # Callable that returns BudgetTracker or None
+) -> Any:
+    """Create a caption_frames closure that captions each frame individually."""
+
+    def caption_frames(
+        *,
+        clip_id: str,
+        prompt: str | None = None,
+    ) -> list[str]:
+        """Caption each frame in a clip individually using the vision model.
+
+        Returns a list of "[timestamp]s caption" strings. Feed these to
+        llm_query() for reasoning — cheaper and more thorough than sending
+        all frames in a single vision_query() call.
+
+        Args:
+            clip_id: ID from extract_clip().
+            prompt: Custom captioning prompt (default: focused scene description).
+        """
+        clips = get_clips()
+        artifact = clips.get(clip_id)
+        if artifact is None:
+            raise ValueError(f"Unknown clip_id: {clip_id}")
+
+        frame_paths = artifact.get("frame_paths", [])
+        if not frame_paths:
+            raise ValueError(
+                f"No frames sampled for {clip_id}. Call sample_frames() first."
+            )
+
+        clip_start = artifact["start_s"]
+        clip_end = artifact["end_s"]
+        clip_duration = clip_end - clip_start
+        n_frames = len(frame_paths)
+
+        effective_prompt = prompt or _CAPTION_PROMPT
+
+        tracer = get_tracer() if get_tracer else None
+        # Prefer dedicated captioner (set via Agent caption_model=),
+        # fall back to moondream on llm_client, then generic vision.
+        moondream = captioner or getattr(llm_client, "_moondream", None)
+
+        if moondream is not None:
+            # Fast path: use Moondream /caption endpoint (per-frame, concurrent)
+            model_label = getattr(moondream, "model_name", "moondream")
+
+            tokens_before = getattr(moondream, "total_input_tokens", 0)
+            out_before = getattr(moondream, "total_output_tokens", 0)
+
+            if tracer:
+                with tracer._span(
+                    "sanjaya.sub_llm_call.caption_frames",
+                    model=model_label,
+                    n_frames=n_frames,
+                    clip_id=clip_id,
+                    backend="moondream_caption",
+                ) as ctx:
+                    captions = moondream.caption_frames_batch(
+                        frame_paths, length="normal",
+                    )
+                    in_delta = getattr(moondream, "total_input_tokens", 0) - tokens_before
+                    out_delta = getattr(moondream, "total_output_tokens", 0) - out_before
+                    ctx.record(n_captions=len(captions))
+                    ctx.record_usage(input_tokens=in_delta, output_tokens=out_delta)
+            else:
+                captions = moondream.caption_frames_batch(
+                    frame_paths, length="normal",
+                )
+                in_delta = getattr(moondream, "total_input_tokens", 0) - tokens_before
+                out_delta = getattr(moondream, "total_output_tokens", 0) - out_before
+
+            # Record moondream cost directly into the budget
+            budget = get_budget() if get_budget else None
+            if budget is not None:
+                # $0.30/1M input, $2.50/1M output
+                cost = (in_delta * 0.30 + out_delta * 2.50) / 1_000_000
+                budget.record(
+                    input_tokens=in_delta,
+                    output_tokens=out_delta,
+                    cost_usd=cost,
+                    model=model_label,
+                )
+        else:
+            # Fallback: use generic vision model with captioning prompt
+            queries = [
+                {
+                    "prompt": effective_prompt,
+                    "frame_paths": [fp],
+                    "clip_paths": None,
+                }
+                for fp in frame_paths
+            ]
+
+            vision_model = getattr(llm_client, "vision_model", "unknown")
+            model_label = (
+                vision_model
+                if isinstance(vision_model, str)
+                else getattr(vision_model, "model_name", "unknown")
+            )
+
+            if tracer:
+                with tracer._span(
+                    "sanjaya.sub_llm_call.caption_frames",
+                    model=model_label,
+                    n_frames=n_frames,
+                    clip_id=clip_id,
+                    backend="vision_completion",
+                ) as ctx:
+                    captions = llm_client.vision_completion_batched(queries)
+                    ctx.record(n_captions=len(captions))
+                    usage = llm_client.last_usage
+                    if usage:
+                        ctx.record_usage(
+                            input_tokens=usage.input_tokens,
+                            output_tokens=usage.output_tokens,
+                        )
+                    _record_vision_budget(llm_client, get_budget)
+            else:
+                captions = llm_client.vision_completion_batched(queries)
+                _record_vision_budget(llm_client, get_budget)
+
+        # Compute timestamp for each frame (uniform spacing within clip)
+        results = []
+        for i, caption in enumerate(captions):
+            if n_frames == 1:
+                ts = clip_start + clip_duration / 2
+            else:
+                ts = clip_start + (i * clip_duration / (n_frames - 1))
+            results.append(f"[{ts:.1f}s] {caption.strip()}")
+
+        return results
+
+    return caption_frames
 
 
 def make_vision_query_batched_fn(

@@ -72,6 +72,8 @@ export interface VisionEntry {
   costUsd: number | null;
   modelUsed: string | null;
   durationSeconds: number | null;
+  framePaths: string[];
+  clipId: string | null;
 }
 
 /** Evidence item from final answer. */
@@ -80,4 +82,52 @@ export interface EvidenceItem {
   startS: number;
   endS: number;
   rationale: string;
+}
+
+/** A single prompt result from one version. */
+export interface PromptResult {
+  promptId: number;
+  promptName: string;
+  videoKey: string;
+  question: string;
+  answerText: string;
+  answerData: Record<string, unknown> | null;
+  iterations: number;
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  wallTimeS: number;
+  evidenceCount: number;
+  evidenceSources: string[];
+  subtitle: {
+    hadExistingSubtitle: boolean;
+    subtitleGenerated: boolean;
+    subtitleSource: string;
+  };
+  error?: string;
+  traceEvents?: TraceEvent[] | null;
+}
+
+/** Merged prompt with all available versions. */
+export interface BenchmarkPrompt {
+  promptId: number;
+  promptName: string;
+  videoKey: string;
+  videoPath: string | null;
+  question: string;
+  versions: Record<string, PromptResult>;
+  bestVersion: string;
+}
+
+export interface BenchmarkData {
+  prompts: BenchmarkPrompt[];
+  summary: {
+    totalPrompts: number;
+    versions: string[];
+    totalCostUsd: number;
+    totalWallTimeS: number;
+    v1CostUsd: number;
+    v1WallTimeS: number;
+    latestVersion: string;
+  };
 }

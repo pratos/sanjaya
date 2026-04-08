@@ -32,7 +32,7 @@ export function Panel({ title, status, children, className }: PanelProps) {
           {title}
         </span>
       </div>
-      <div className="flex-1 overflow-auto p-3">{children}</div>
+      <div className="flex-1 min-h-0 overflow-auto p-3">{children}</div>
     </div>
   );
 }

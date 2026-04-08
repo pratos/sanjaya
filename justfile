@@ -4,6 +4,14 @@ set shell := ["bash", "-cu"]
 dev:
 	overmind start
 
+# Start only the FastAPI backend (port 8000).
+api:
+	uv run --project api uvicorn sanjaya_api.main:app --port 8000 --reload
+
+# Start only the Next.js UI (port 5100).
+ui:
+	cd ui && bun dev --port 5100
+
 # Run VideoRLM on a local sample video (override args as needed).
 video-qna \
   video="data/longvideobench/videos/7F9IrtSHmc0.mp4" \
@@ -17,6 +25,14 @@ video-qna \
 	  --subtitle-mode "{{subtitle_mode}}" \
 	  --subtitle-api-model "{{subtitle_api_model}}" \
 	  --format "{{format}}"
+
+# Generate subtitle sidecars with parakeet-mlx (pass video paths, or --all-youtube).
+subtitles *args:
+	uv run --with parakeet-mlx python scripts/generate_subtitles.py {{ if args == "" { "--all-youtube" } else { args } }}
+
+# Run demo prompts against test videos (pass prompt IDs to run specific ones).
+demo *ids:
+	uv run python scripts/run_demo_prompts.py {{ if ids == "" { "" } else { "--prompt " + ids } }}
 
 # Inspect latest persisted trace (or pass manifest/run_id).
 video-trace manifest="" run_id="":

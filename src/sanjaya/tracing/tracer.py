@@ -137,24 +137,25 @@ class Tracer:
 
         logfire = self._logfire()
         if logfire is not None:
-            try:
-                with logfire.span(name, **attrs) as span:
-                    ctx._span = span
-                    if self._track_events:
-                        self._event_buffer.emit(f"{name}_start", **attrs)
+            with logfire.span(name, **attrs) as span:
+                ctx._span = span
+                if self._track_events:
+                    self._event_buffer.emit(f"{name}_start", **attrs)
+                try:
                     yield ctx
+                finally:
                     if self._track_events:
                         self._event_buffer.emit(f"{name}_end", **ctx._data)
-                    return
-            except Exception:
-                pass
+                return
 
         # Fallback: no logfire
         if self._track_events:
             self._event_buffer.emit(f"{name}_start", **attrs)
-        yield ctx
-        if self._track_events:
-            self._event_buffer.emit(f"{name}_end", **ctx._data)
+        try:
+            yield ctx
+        finally:
+            if self._track_events:
+                self._event_buffer.emit(f"{name}_end", **ctx._data)
 
     # ── Generic span methods ─��──────────────────────────────
 
