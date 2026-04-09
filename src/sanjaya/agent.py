@@ -249,15 +249,6 @@ class Agent:
                 usage = self._sub_llm.last_usage
                 if usage:
                     cost = self._sub_llm.last_cost_usd or 0.0
-                    llm_trace.record_usage(
-                        input_tokens=usage.input_tokens,
-                        output_tokens=usage.output_tokens,
-                    )
-                    llm_trace.record_llm_cost(
-                        input_tokens=usage.input_tokens,
-                        output_tokens=usage.output_tokens,
-                        model_name=sub_model_name,
-                    )
                     self._budget.record(
                         input_tokens=usage.input_tokens,
                         output_tokens=usage.output_tokens,
@@ -418,15 +409,21 @@ class Agent:
                 wall_time_s=round(time.time() - start_time, 2),
             )
 
-            # Record cost on the top-level span
-            comp_trace.record_usage(
-                input_tokens=self._budget.total_input_tokens,
-                output_tokens=self._budget.total_output_tokens,
-            )
-            comp_trace.record_llm_cost(
-                input_tokens=self._budget.total_input_tokens,
-                output_tokens=self._budget.total_output_tokens,
-                model_name=model_name,
+            # Record final answer on the completion span so run_end SSE
+            # event includes it (the UI reads final_answer from run_end).
+            is_forced = loop_result.iterations_used >= config.max_iterations
+            comp_trace.record_final_answer(text, forced=is_forced)
+            comp_trace.record(answer_preview=text[:200])
+
+            # Record tokens and cost on the top-level span.
+            # Use the budget's accumulated cost (which prices each call
+            # with its actual model) instead of re-pricing all tokens
+            # under the orchestrator model — that caused cost divergence
+            # between the UI and Logfire.
+            comp_trace.record(
+                sanjaya_cost_usd=self._budget.total_cost_usd,
+                sanjaya_input_tokens=self._budget.total_input_tokens,
+                sanjaya_output_tokens=self._budget.total_output_tokens,
             )
 
         self._last_answer = answer

@@ -127,11 +127,9 @@ def _run_iteration(
                     model=orchestrator.model,
                 )
                 if orch_trace:
-                    orch_trace.record_usage(input_tokens=usage.input_tokens, output_tokens=usage.output_tokens)
-                    orch_trace.record_llm_cost(
-                        input_tokens=usage.input_tokens,
-                        output_tokens=usage.output_tokens,
-                        model_name=model_name,
+                    orch_trace.record(
+                        sanjaya_input_tokens=usage.input_tokens,
+                        sanjaya_output_tokens=usage.output_tokens,
                     )
 
         # Extract and execute code blocks

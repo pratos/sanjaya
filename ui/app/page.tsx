@@ -5,6 +5,7 @@ import type { BenchmarkData } from "@/lib/types";
 import { fetchBenchmarks } from "@/lib/api";
 import { SummaryHeader } from "@/components/benchmark/summary-header";
 import { OverviewTable } from "@/components/benchmark/overview-table";
+import { LiveRunHistory } from "@/components/benchmark/live-run-history";
 
 export default function BenchmarkDashboard() {
   const [data, setData] = useState<BenchmarkData | null>(null);
@@ -39,8 +40,9 @@ export default function BenchmarkDashboard() {
   return (
     <div className="flex min-h-screen flex-col">
       <SummaryHeader data={data} />
-      <div className="flex-1 p-4">
+      <div className="flex-1 p-4 space-y-4">
         <OverviewTable prompts={data.prompts} latestVersion={data.summary.latestVersion} />
+        <LiveRunHistory data={data.liveRuns} videos={data.videos} />
       </div>
     </div>
   );

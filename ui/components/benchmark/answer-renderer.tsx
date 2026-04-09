@@ -89,7 +89,7 @@ export function AnswerRenderer({ data, onSeek }: AnswerRendererProps) {
       );
     } else if (Array.isArray(value) && value.length > 0) {
       sections.push(
-        <SimpleList key={key} label={formatLabel(key)} items={value as string[]} />
+        <SimpleList key={key} label={formatLabel(key)} items={value as string[]} onSeek={onSeek} />
       );
     } else if (typeof value === "object" && value !== null) {
       sections.push(
@@ -103,7 +103,7 @@ export function AnswerRenderer({ data, onSeek }: AnswerRendererProps) {
   if (Array.isArray(evidence) && evidence.length > 0) {
     if (typeof evidence[0] === "string") {
       sections.push(
-        <SimpleList key="evidence" label="Evidence" items={evidence as string[]} />
+        <SimpleList key="evidence" label="Evidence" items={evidence as string[]} onSeek={onSeek} />
       );
     } else {
       sections.push(
@@ -199,7 +199,44 @@ function ListSection({ label, items, onSeek }: { label: string; items: Row[]; on
   );
 }
 
-function SimpleList({ label, items }: { label: string; items: string[] }) {
+/**
+ * Render a string with inline timestamps as clickable links.
+ * Matches patterns like [00:22], [89.92-91.88], (02:13), 00:44, etc.
+ */
+export function InlineTimestamps({ text, onSeek }: { text: string; onSeek?: (s: number) => void }) {
+  if (!onSeek) return <>{text}</>;
+
+  // Match timestamps in brackets, parens, or standalone MM:SS / HH:MM:SS patterns
+  const parts = text.split(/(\[[\d:.,\s–-]+\]|\([\d:.,\s–-]+\)|\b\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?\b)/g);
+
+  return (
+    <>
+      {parts.map((part, i) => {
+        // Strip brackets/parens for parsing
+        const stripped = part.replace(/^[[(]|[\])]$/g, "").trim();
+        // Take the start of a range
+        const start = stripped.split(/[-–,]/)[0].trim();
+        const seconds = parseTimestamp(start);
+        if (seconds != null) {
+          return (
+            <button
+              key={i}
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onSeek(seconds); }}
+              className="text-hud-cyan hover:text-hud-green underline underline-offset-2 decoration-hud-cyan/40 hover:decoration-hud-green cursor-pointer transition-colors"
+              title={`Seek to ${start}`}
+            >
+              {part}
+            </button>
+          );
+        }
+        return <span key={i}>{part}</span>;
+      })}
+    </>
+  );
+}
+
+function SimpleList({ label, items, onSeek }: { label: string; items: string[]; onSeek?: (s: number) => void }) {
   return (
     <div>
       <span className="block text-[9px] font-bold uppercase tracking-[0.15em] text-hud-dim mb-1">
@@ -208,7 +245,7 @@ function SimpleList({ label, items }: { label: string; items: string[] }) {
       <ul className="space-y-0.5">
         {items.map((item, i) => (
           <li key={i} className="text-[10px] text-hud-label pl-2 border-l border-hud-border/50">
-            {item}
+            <InlineTimestamps text={item} onSeek={onSeek} />
           </li>
         ))}
       </ul>

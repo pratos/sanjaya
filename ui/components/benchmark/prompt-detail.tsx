@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { BenchmarkPrompt, TraceEvent } from "@/lib/types";
 import { videoStreamUrl } from "@/lib/api";
-import { AnswerRenderer } from "./answer-renderer";
+import { AnswerRenderer, InlineTimestamps } from "./answer-renderer";
 import { NarrativeNote } from "./narrative-note";
 import { TraceTimeline } from "@/components/hud/trace-timeline";
 import { NARRATIVES } from "@/lib/narratives";
@@ -98,7 +98,7 @@ export function PromptDetail({ prompt }: PromptDetailProps) {
               Answer
             </span>
             <p className="text-xs text-foreground leading-relaxed whitespace-pre-wrap">
-              {active.answerText}
+              <InlineTimestamps text={active.answerText} onSeek={handleSeek} />
             </p>
           </div>
         )}

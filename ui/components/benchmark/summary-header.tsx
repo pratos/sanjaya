@@ -19,11 +19,11 @@ export function SummaryHeader({ data }: SummaryHeaderProps) {
     <div className="border-b border-hud-border bg-hud-panel px-6 py-5">
       <div className="flex items-end justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-[0.3em] text-foreground">
-            SANJAYA
+          <h1 className="text-2xl font-bold tracking-[0.3em] text-foreground lowercase">
+            sanjaya
           </h1>
-          <p className="text-[10px] uppercase tracking-[0.15em] text-hud-dim mt-1">
-            Video Analysis Benchmark Results
+          <p className="text-[10px] lowercase tracking-[0.15em] text-hud-dim mt-1">
+            experimental video analysis via rlms
           </p>
         </div>
         <div className="flex items-center gap-8">
@@ -49,7 +49,7 @@ export function SummaryHeader({ data }: SummaryHeaderProps) {
           <div className="h-6 w-px bg-hud-border" />
           <Stat
             label="MODELS"
-            value="gpt-5.3-codex / gpt-4.1-mini / qwen3-30b"
+            value="gpt-5.3-codex / gpt-4.1-mini / qwen3-30b / moondream3"
             small
           />
           <div className="h-6 w-px bg-hud-border" />

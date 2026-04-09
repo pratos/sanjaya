@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "SANJAYA HUD",
-  description: "VideoRLM Orchestration Monitor",
+  title: "sanjaya",
+  description: "Experimental video analysis via RLMs",
 };
 
 export default function RootLayout({

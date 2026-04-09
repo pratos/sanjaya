@@ -157,11 +157,146 @@ async function loadVersion(version: string, dirName: string) {
   return results;
 }
 
+/** Trace JSON written by agent._persist_trace for each live run. */
+interface TraceJson {
+  run_id: string;
+  question: string;
+  model: string;
+  sub_model?: string;
+  vision_model?: string;
+  answer: string;
+  answer_data: Record<string, unknown> | null;
+  iterations: number;
+  wall_time_s: number;
+  cost: {
+    total_cost_usd: number;
+    total_input_tokens: number;
+    total_output_tokens: number;
+    elapsed_s?: number;
+    calls?: number;
+  };
+  evidence_count: number;
+  events?: TraceEvent[];
+  messages?: Array<{ role: string; content: string }>;
+}
+
+/** Extract relative video path (e.g. "youtube/abc.mp4") from system message. */
+function extractVideoPath(trace: TraceJson): string | null {
+  const msgs = trace.messages;
+  if (!msgs?.length) return null;
+  const content = msgs[0]?.content ?? "";
+  const m = content.match(/- video:\s*(.+\.mp4)/);
+  if (!m) return null;
+  const full = m[1].trim();
+  const idx = full.indexOf("/data/");
+  if (idx >= 0) return full.slice(idx + 6);
+  // Fall back to filename
+  const parts = full.split("/");
+  return parts[parts.length - 1];
+}
+
+interface LiveRunEntry {
+  runId: string;
+  timestamp: string; // directory name e.g. "20260408-165850"
+  model: string;
+  videoPath: string | null;
+  data: ReturnType<typeof toCamelCase>;
+}
+
+/** Scan sanjaya_artifacts/ for live UI runs and convert to the same format as benchmark prompts. */
+async function loadLiveRuns(): Promise<LiveRunEntry[]> {
+  const artifactsDir = join(process.cwd(), "..", "sanjaya_artifacts");
+  const results: LiveRunEntry[] = [];
+
+  let runDirs: string[];
+  try {
+    runDirs = await readdir(artifactsDir);
+  } catch {
+    return results;
+  }
+
+  // Sort by directory name (timestamp-based) so prompt IDs are chronological
+  runDirs.sort();
+
+  for (let i = 0; i < runDirs.length; i++) {
+    const runDir = runDirs[i];
+    const tracePath = join(artifactsDir, runDir, "trace.json");
+    const manifestPath = join(artifactsDir, runDir, "manifest.json");
+    try {
+      const trace = JSON.parse(await readFile(tracePath, "utf-8")) as TraceJson;
+      const promptId = 1000 + i;
+
+      const promptName = trace.question.length > 50
+        ? trace.question.slice(0, 50).replace(/\s+\S*$/, "") + "…"
+        : trace.question;
+
+      // Read trace events from manifest (same format as benchmark prompt JSONs)
+      let traceEvents: TraceEvent[] | undefined;
+      try {
+        const manifest = JSON.parse(await readFile(manifestPath, "utf-8"));
+        const rawEvents: TraceEvent[] = manifest.trace_events ?? [];
+        traceEvents = normalizeTraceEvents(rawEvents);
+      } catch {
+        // Fall back to events from trace.json
+        if (trace.events) {
+          traceEvents = normalizeTraceEvents(trace.events);
+        }
+      }
+
+      // Parse answer_data: trace.answer may be a stringified JSON dict
+      let answerText = "";
+      let answerData = trace.answer_data;
+      if (typeof trace.answer === "string") {
+        answerText = trace.answer;
+        if (!answerData) {
+          try { answerData = JSON.parse(trace.answer); } catch { /* not JSON */ }
+        }
+      } else {
+        answerText = JSON.stringify(trace.answer);
+      }
+
+      const raw: RawResult = {
+        prompt_id: promptId,
+        prompt_name: promptName,
+        video_key: "live",
+        question: trace.question,
+        answer_text: answerText,
+        answer_data: answerData,
+        iterations: trace.iterations,
+        cost_usd: trace.cost?.total_cost_usd ?? 0,
+        input_tokens: trace.cost?.total_input_tokens ?? 0,
+        output_tokens: trace.cost?.total_output_tokens ?? 0,
+        wall_time_s: trace.wall_time_s ?? 0,
+        evidence_count: trace.evidence_count ?? 0,
+        evidence_sources: [],
+        subtitle: {
+          had_existing_subtitle: false,
+          subtitle_generated: false,
+          subtitle_source: "unknown",
+        },
+        trace_events: traceEvents,
+      };
+
+      results.push({
+        runId: trace.run_id ?? runDir,
+        timestamp: runDir,
+        model: trace.model ?? "unknown",
+        videoPath: extractVideoPath(trace),
+        data: toCamelCase(raw),
+      });
+    } catch {
+      // skip runs without trace.json
+    }
+  }
+
+  return results;
+}
+
 export async function GET() {
   // Auto-discover version directories
   const versionDirs = await discoverVersionDirs();
 
-  // Load all versions
+  // Load benchmark versions
   const allResults: Array<{ version: string; data: ReturnType<typeof toCamelCase> }> = [];
   for (const [version, dirName] of Object.entries(versionDirs)) {
     const results = await loadVersion(version, dirName);
@@ -234,6 +369,35 @@ export async function GET() {
   });
   const latestVersion = sortedVersions[sortedVersions.length - 1] ?? "v1";
 
+  // Load live runs separately
+  const liveRunEntries = await loadLiveRuns();
+
+  const liveRunItems = liveRunEntries.map((entry) => ({
+    runId: entry.runId,
+    timestamp: entry.timestamp,
+    model: entry.model,
+    prompt: {
+      promptId: entry.data.promptId,
+      promptName: entry.data.promptName,
+      videoKey: entry.data.videoKey,
+      videoPath: entry.videoPath,
+      question: entry.data.question,
+      versions: { live: entry.data },
+      bestVersion: "live",
+    },
+  }));
+
+  // Live runs summary
+  let liveCostUsd = 0;
+  let liveWallTimeS = 0;
+  for (const item of liveRunItems) {
+    const d = item.prompt.versions.live;
+    if (d && !d.error) {
+      liveCostUsd += d.costUsd;
+      liveWallTimeS += d.wallTimeS;
+    }
+  }
+
   return NextResponse.json({
     prompts,
     summary: {
@@ -245,5 +409,12 @@ export async function GET() {
       v1WallTimeS: Math.round(v1WallTimeS * 10) / 10,
       latestVersion,
     },
+    liveRuns: {
+      runs: liveRunItems,
+      totalRuns: liveRunItems.length,
+      totalCostUsd: Math.round(liveCostUsd * 10000) / 10000,
+      totalWallTimeS: Math.round(liveWallTimeS * 10) / 10,
+    },
+    videos: Object.entries(VIDEO_PATHS).map(([key, path]) => ({ key, path })),
   });
 }

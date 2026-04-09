@@ -362,7 +362,8 @@ class LLMClient:
         return str(response), result
 
     async def _run_agent_async(self, model: ModelSpec, payload: Any) -> tuple[str, Any]:
-        agent = Agent(model=model, output_type=str, retries=1, defer_model_check=True)
+        model_label = model if isinstance(model, str) else getattr(model, "model_name", "unknown")
+        agent = Agent(model=model, output_type=str, retries=1, defer_model_check=True, name=f"sanjaya:{self.name}:{model_label}")
         result = await agent.run(payload)
         response = result.output if hasattr(result, "output") else str(result)
         return str(response), result
@@ -493,7 +494,7 @@ class LLMClient:
         raise RuntimeError("Unreachable")
 
     def _run_batched(self, calls: list[dict[str, Any]]) -> list[str]:
-        """Run multiple calls concurrently."""
+        """Run multiple calls concurrently, accumulating usage."""
         from opentelemetry import context as otel_context
         parent_ctx = otel_context.get_current()
 
@@ -510,10 +511,34 @@ class LLMClient:
         raw_results = future.result()
 
         responses: list[str] = []
+        total_input = 0
+        total_output = 0
+        total_cost = 0.0
         for r in raw_results:
             if isinstance(r, Exception):
                 responses.append(f"Error: {r}")
             else:
-                response_text, _ = r
+                response_text, result = r
                 responses.append(response_text)
+                # Accumulate usage from each call
+                snap = self._capture_usage(result)
+                total_input += snap.input_tokens
+                total_output += snap.output_tokens
+                cost = self._extract_cost_usd(result)
+                if cost:
+                    total_cost += cost
+
+        # Set accumulated totals as last_usage
+        self.last_usage = UsageSnapshot(
+            input_tokens=total_input,
+            output_tokens=total_output,
+            total_tokens=total_input + total_output,
+        )
+        self.last_call_metadata = CallMetadata(
+            requested_model=str(calls[0]["model"]) if calls else "unknown",
+            model_used="batched",
+            provider="batched",
+            duration_seconds=0,
+            cost_usd=total_cost if total_cost > 0 else None,
+        )
         return responses

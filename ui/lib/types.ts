@@ -119,6 +119,25 @@ export interface BenchmarkPrompt {
   bestVersion: string;
 }
 
+export interface LiveRunItem {
+  runId: string;
+  timestamp: string;
+  model: string;
+  prompt: BenchmarkPrompt;
+}
+
+export interface LiveRunsData {
+  runs: LiveRunItem[];
+  totalRuns: number;
+  totalCostUsd: number;
+  totalWallTimeS: number;
+}
+
+export interface VideoInfo {
+  key: string;
+  path: string;
+}
+
 export interface BenchmarkData {
   prompts: BenchmarkPrompt[];
   summary: {
@@ -130,4 +149,6 @@ export interface BenchmarkData {
     v1WallTimeS: number;
     latestVersion: string;
   };
+  liveRuns: LiveRunsData;
+  videos: VideoInfo[];
 }

@@ -93,9 +93,6 @@ def make_vision_query_fn(
                     clip_paths=collected_clips if collected_clips else None,
                 )
                 ctx.record_response(result)
-                usage = llm_client.last_usage
-                if usage:
-                    ctx.record_usage(input_tokens=usage.input_tokens, output_tokens=usage.output_tokens)
                 metadata = llm_client.last_call_metadata
                 if metadata:
                     ctx.record(cost_usd=metadata.cost_usd, duration_seconds=metadata.duration_seconds)
@@ -181,8 +178,7 @@ def make_caption_frames_fn(
                     )
                     in_delta = getattr(moondream, "total_input_tokens", 0) - tokens_before
                     out_delta = getattr(moondream, "total_output_tokens", 0) - out_before
-                    ctx.record(n_captions=len(captions))
-                    ctx.record_usage(input_tokens=in_delta, output_tokens=out_delta)
+                    ctx.record(n_captions=len(captions), sanjaya_input_tokens=in_delta, sanjaya_output_tokens=out_delta)
             else:
                 captions = moondream.caption_frames_batch(
                     frame_paths, length="normal",
@@ -229,12 +225,6 @@ def make_caption_frames_fn(
                 ) as ctx:
                     captions = llm_client.vision_completion_batched(queries)
                     ctx.record(n_captions=len(captions))
-                    usage = llm_client.last_usage
-                    if usage:
-                        ctx.record_usage(
-                            input_tokens=usage.input_tokens,
-                            output_tokens=usage.output_tokens,
-                        )
                     _record_vision_budget(llm_client, get_budget)
             else:
                 captions = llm_client.vision_completion_batched(queries)
@@ -304,9 +294,6 @@ def make_vision_query_batched_fn(
             ) as ctx:
                 results = llm_client.vision_completion_batched(batch)
                 ctx.record(n_results=len(results))
-                usage = llm_client.last_usage
-                if usage:
-                    ctx.record_usage(input_tokens=usage.input_tokens, output_tokens=usage.output_tokens)
                 _record_vision_budget(llm_client, get_budget)
                 return results
         else:

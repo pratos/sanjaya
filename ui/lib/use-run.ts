@@ -74,7 +74,9 @@ export function useRun() {
             (p.answer_preview as string) ??
             (p.response_preview as string) ??
             prev.finalAnswer;
-          updates.finalStatus = prev.finalStatus ?? "final_answer";
+          updates.finalStatus = p.forced_answer
+            ? "forced_final_answer"
+            : prev.finalStatus ?? "final_answer";
           break;
         }
 
