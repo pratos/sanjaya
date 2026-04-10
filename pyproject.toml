@@ -21,8 +21,9 @@ dependencies = [
 
 [project.optional-dependencies]
 video = ["logfire", "Pillow>=10.0"]
+document = ["pymupdf>=1.24", "python-pptx>=1.0"]
 tracing = ["logfire"]
-all = ["sanjaya[video,tracing]"]
+all = ["sanjaya[video,tracing,document]"]
 dev = [
     "ruff",
     "pytest",

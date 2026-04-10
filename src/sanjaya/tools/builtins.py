@@ -62,6 +62,50 @@ def make_llm_query_batched_tool(llm_query_batched_fn: Callable[[list[str]], list
     )
 
 
+def make_rlm_query_tool(rlm_query_fn: Callable[[str], str]) -> Tool:
+    """Create the `rlm_query` tool for recursive sub-calls."""
+    return Tool(
+        name="rlm_query",
+        description=(
+            "Spawn a recursive RLM sub-call. The child agent gets a fresh REPL "
+            "sandbox, can write code, use all available tools, and iterate "
+            "independently until it solves the sub-problem. Use this when the "
+            "subtask requires multi-step reasoning or its own exploration loop. "
+            "Falls back to llm_query at maximum recursion depth."
+        ),
+        fn=rlm_query_fn,
+        parameters={
+            "prompt": ToolParam(
+                name="prompt",
+                type_hint="str",
+                description="The task/question for the child RLM to solve.",
+            ),
+        },
+        return_type="str",
+    )
+
+
+def make_rlm_query_batched_tool(rlm_query_batched_fn: Callable[[list[str]], list[str]]) -> Tool:
+    """Create the `rlm_query_batched` tool for concurrent recursive sub-calls."""
+    return Tool(
+        name="rlm_query_batched",
+        description=(
+            "Run multiple recursive RLM sub-calls concurrently. Each child gets "
+            "a fresh REPL sandbox and iterates independently. Much faster than "
+            "sequential rlm_query() calls for independent sub-problems."
+        ),
+        fn=rlm_query_batched_fn,
+        parameters={
+            "prompts": ToolParam(
+                name="prompts",
+                type_hint="list[str]",
+                description="List of tasks/questions to solve concurrently.",
+            ),
+        },
+        return_type="list[str]",
+    )
+
+
 def make_done_tool(done_fn: Callable[[Any], Any]) -> Tool:
     """Create the `done` tool that signals the final answer."""
     return Tool(

@@ -26,6 +26,8 @@ from .tools.builtins import (
     make_get_state_tool,
     make_llm_query_batched_tool,
     make_llm_query_tool,
+    make_rlm_query_batched_tool,
+    make_rlm_query_tool,
 )
 from .tools.registry import ToolRegistry
 from .tracing import Tracer
@@ -89,6 +91,7 @@ class Agent:
         *,
         provider: Provider | None = None,
         max_iterations: int = 8,
+        max_depth: int = 1,
         max_budget_usd: float | None = None,
         max_timeout_s: float | None = None,
         compaction_threshold: float = 0.85,
@@ -110,6 +113,8 @@ class Agent:
         self.caption_model = caption_model
         self.fallback_model = fallback_model
         self.max_iterations = max_iterations
+        self._max_depth = max_depth
+        self._depth = 0  # always 0 for user-created agents
         self.max_budget_usd = max_budget_usd
         self.max_timeout_s = max_timeout_s
         self.compaction_threshold = compaction_threshold
@@ -187,6 +192,7 @@ class Agent:
         context: Any = None,
         video: str | None = None,
         subtitle: str | None = None,
+        document: str | list[str] | None = None,
     ) -> Answer:
         """Run the RLM loop and return a structured answer."""
         start_time = time.time()
@@ -202,6 +208,15 @@ class Agent:
                 vt._captioner = self._captioner
             self._registry.register_toolkit(vt)
 
+        # Auto-register DocumentToolkit if document= provided and none registered
+        if document and not self._has_document_toolkit():
+            from .tools.document import DocumentToolkit
+            dt = DocumentToolkit()
+            dt._llm_client = self._sub_llm
+            dt._tracer = self._tracer
+            dt._budget = self._budget
+            self._registry.register_toolkit(dt)
+
         # Build context dict for toolkits (modality classified later, inside the
         # completion span, so the sub_llm call shows up under sanjaya.completion)
         context_dict: dict[str, Any] = {
@@ -209,6 +224,7 @@ class Agent:
             "context": context,
             "video": video,
             "subtitle": subtitle,
+            "document": document,
             "modality": "balanced",
         }
 
@@ -295,6 +311,34 @@ class Agent:
         run_registry.register(make_done_tool(repl.mark_done))
         run_registry.register(make_get_state_tool(_get_state))
 
+        # Register rlm_query builtins (only when recursion is enabled)
+        if self._max_depth > 1:
+            def _rlm_query(prompt: str) -> str:
+                return self._subcall(
+                    prompt,
+                    depth=1,
+                    parent_run_registry=run_registry,
+                    parent_context=context,
+                )
+
+            def _rlm_query_batched(prompts: list[str]) -> list[str]:
+                from concurrent.futures import ThreadPoolExecutor
+                with ThreadPoolExecutor(max_workers=4) as pool:
+                    futures = [
+                        pool.submit(
+                            self._subcall,
+                            p,
+                            depth=1,
+                            parent_run_registry=run_registry,
+                            parent_context=context,
+                        )
+                        for p in prompts
+                    ]
+                    return [f.result() for f in futures]
+
+            run_registry.register(make_rlm_query_tool(_rlm_query))
+            run_registry.register(make_rlm_query_batched_tool(_rlm_query_batched))
+
         # Build system prompt
         toolkit_sections = [
             tk.prompt_section()
@@ -314,6 +358,7 @@ class Agent:
             registry=run_registry,
             context_metadata=context_metadata,
             toolkit_sections=toolkit_sections,
+            max_depth=self._max_depth,
         )
 
         # Run the loop
@@ -347,6 +392,7 @@ class Agent:
                     registry=run_registry,
                     context_metadata=context_metadata,
                     toolkit_sections=toolkit_sections,
+                    max_depth=self._max_depth,
                 )
 
             # Generate answer schema for this question
@@ -429,6 +475,172 @@ class Agent:
         self._last_answer = answer
         return answer
 
+    # Names of builtin tools that are re-created per child (not inherited)
+    _BUILTIN_NAMES = frozenset({
+        "llm_query", "llm_query_batched",
+        "rlm_query", "rlm_query_batched",
+        "done", "get_context", "get_state",
+    })
+
+    def _subcall(
+        self,
+        prompt: str,
+        *,
+        depth: int,
+        parent_run_registry: ToolRegistry,
+        parent_context: Any = None,
+    ) -> str:
+        """Run a recursive RLM sub-call with its own REPL and loop.
+
+        At leaf depth (depth >= max_depth), falls back to a plain LLM
+        completion with no REPL.
+        """
+        from rich.console import Console
+        _console = Console()
+
+        # Leaf node: plain LLM call, no REPL
+        if depth >= self._max_depth:
+            _console.print(f"[dim]rlm_query d{depth}: leaf node, falling back to llm_query[/]")
+            return self._sub_llm.completion(prompt)
+
+        _console.print(f"[bold magenta]>>> rlm_query d{depth}: spawning child loop[/]")
+
+        # --- Build child registry (inherit non-builtin tools) ---
+        child_registry = ToolRegistry()
+        for t in parent_run_registry.all_tools():
+            if t.name not in self._BUILTIN_NAMES:
+                child_registry.register(t)
+
+        # --- Create child REPL ---
+        repl = AgentREPL(registry=child_registry, context=parent_context)
+
+        # Inherit OS access from parent (for video toolkit)
+        for toolkit in self._registry.toolkits:
+            if hasattr(toolkit, "get_os_access"):
+                os_access = toolkit.get_os_access()
+                if os_access is not None:
+                    repl.set_os_access(os_access)
+
+        # --- Child builtins ---
+        def _child_llm_query(p: str) -> str:
+            response = self._sub_llm.completion(p)
+            repl.record_llm_query(p, response)
+            usage = self._sub_llm.last_usage
+            if usage:
+                cost = self._sub_llm.last_cost_usd or 0.0
+                self._budget.record(
+                    input_tokens=usage.input_tokens,
+                    output_tokens=usage.output_tokens,
+                    cost_usd=cost,
+                    model=_model_label(self.sub_model),
+                )
+            return response
+
+        def _child_llm_query_batched(prompts: list[str]) -> list[str]:
+            responses = self._sub_llm.completion_batched(prompts)
+            for p, r in zip(prompts, responses):
+                repl.record_llm_query(p, r)
+            return responses
+
+        def _child_rlm_query(p: str) -> str:
+            return self._subcall(
+                p,
+                depth=depth + 1,
+                parent_run_registry=child_registry,
+                parent_context=parent_context,
+            )
+
+        def _child_rlm_query_batched(prompts: list[str]) -> list[str]:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                futures = [
+                    pool.submit(
+                        self._subcall,
+                        p,
+                        depth=depth + 1,
+                        parent_run_registry=child_registry,
+                        parent_context=parent_context,
+                    )
+                    for p in prompts
+                ]
+                return [f.result() for f in futures]
+
+        def _child_get_state() -> dict[str, Any]:
+            return {
+                "depth": depth,
+                "max_depth": self._max_depth,
+                "tools": [t.name for t in child_registry.all_tools()],
+                "budget": self._budget.summary(),
+            }
+
+        child_registry.register(make_context_tool(lambda: repl.context))
+        child_registry.register(make_llm_query_tool(_child_llm_query))
+        child_registry.register(make_llm_query_batched_tool(_child_llm_query_batched))
+        child_registry.register(make_done_tool(repl.mark_done))
+        child_registry.register(make_get_state_tool(_child_get_state))
+        child_registry.register(make_rlm_query_tool(_child_rlm_query))
+        child_registry.register(make_rlm_query_batched_tool(_child_rlm_query_batched))
+
+        # --- System prompt ---
+        system_prompt = build_system_prompt(registry=child_registry, max_depth=self._max_depth)
+
+        # --- Child orchestrator (uses sub_model) ---
+        child_orchestrator = LLMClient(
+            model=self.sub_model,
+            fallback_model=self.fallback_model,
+            name=f"child_rlm_d{depth}",
+        )
+
+        # --- Budget: remaining headroom from parent ---
+        remaining_budget = None
+        if self._budget.max_budget_usd is not None:
+            remaining_budget = max(0.0, self._budget.max_budget_usd - self._budget.total_cost_usd)
+
+        remaining_timeout = None
+        if self._budget.max_timeout_s is not None:
+            remaining_timeout = max(0.0, self._budget.max_timeout_s - self._budget.elapsed_s)
+
+        child_budget = BudgetTracker(
+            max_budget_usd=remaining_budget,
+            max_timeout_s=remaining_timeout,
+        )
+
+        child_config = LoopConfig(
+            max_iterations=self.max_iterations,
+            max_budget_usd=remaining_budget,
+            max_timeout_s=remaining_timeout,
+            compaction_threshold=self.compaction_threshold,
+        )
+
+        # --- Run child loop (no critic, no schema) ---
+        result = run_loop(
+            orchestrator=child_orchestrator,
+            repl=repl,
+            system_prompt=system_prompt,
+            question=prompt,
+            config=child_config,
+            budget=child_budget,
+            tracer=self._tracer,
+            critic=None,
+            answer_schema=None,
+        )
+
+        # --- Merge child costs into parent budget ---
+        self._budget.record(
+            input_tokens=child_budget.total_input_tokens,
+            output_tokens=child_budget.total_output_tokens,
+            cost_usd=child_budget.total_cost_usd,
+            model=f"child_rlm_d{depth}",
+        )
+
+        _console.print(f"[bold magenta]<<< rlm_query d{depth}: child done ({result.iterations_used} iters)[/]")
+
+        # --- Extract answer string ---
+        raw = result.raw_answer
+        if isinstance(raw, dict):
+            return str(raw.get("summary") or raw.get("answer") or raw)
+        return str(raw)
+
     @property
     def last_answer(self) -> Answer | None:
         """Most recent answer, for notebook inspection."""
@@ -499,5 +711,13 @@ class Agent:
         try:
             from .tools.video import VideoToolkit
             return any(isinstance(tk, VideoToolkit) for tk in self._registry.toolkits)
+        except ImportError:
+            return False
+
+    def _has_document_toolkit(self) -> bool:
+        """Check if a DocumentToolkit is already registered."""
+        try:
+            from .tools.document import DocumentToolkit
+            return any(isinstance(tk, DocumentToolkit) for tk in self._registry.toolkits)
         except ImportError:
             return False
