@@ -30,12 +30,42 @@ async function discoverVersionDirs(): Promise<Record<string, string>> {
   return versions;
 }
 
-const VIDEO_PATHS: Record<string, string> = {
-  podcast: "youtube/5RAFKES5J6E.mp4",
-  curry: "youtube/zVg3FvMuDlw.mp4",
-  mkbhd: "youtube/rng_yUSwrgU.mp4",
-  football: "youtube/9gyv2xh7qQw.mp4",
-  tech_talk: "youtube/qdfwmYTO0Aw.mp4",
+const VIDEO_META: Record<string, { path: string; title: string; channel: string; youtubeId: string; duration: string }> = {
+  podcast: {
+    path: "youtube/5RAFKES5J6E.mp4",
+    title: "RLM Theory Overview feat. Alex L. Zhang",
+    channel: "Deep Learning with Yacine",
+    youtubeId: "5RAFKES5J6E",
+    duration: "2:13:20",
+  },
+  curry: {
+    path: "youtube/zVg3FvMuDlw.mp4",
+    title: "Stephen Curry's CRAZIEST Made Threes This Season!",
+    channel: "NBA",
+    youtubeId: "zVg3FvMuDlw",
+    duration: "36:52",
+  },
+  mkbhd: {
+    path: "youtube/rng_yUSwrgU.mp4",
+    title: "iPhone 17 Review: No Asterisks!",
+    channel: "Marques Brownlee",
+    youtubeId: "rng_yUSwrgU",
+    duration: "11:20",
+  },
+  football: {
+    path: "youtube/9gyv2xh7qQw.mp4",
+    title: "Manchester City v Arsenal | Fourth Round | Emirates FA Cup 2022-23",
+    channel: "The Emirates FA Cup",
+    youtubeId: "9gyv2xh7qQw",
+    duration: "1:42:21",
+  },
+  tech_talk: {
+    path: "youtube/qdfwmYTO0Aw.mp4",
+    title: "Prompting Is Becoming a Product Surface",
+    channel: "Boundary",
+    youtubeId: "qdfwmYTO0Aw",
+    duration: "50:14",
+  },
 };
 
 interface TraceEvent {
@@ -335,7 +365,7 @@ export async function GET() {
         promptId,
         promptName: best.promptName,
         videoKey: best.videoKey,
-        videoPath: VIDEO_PATHS[best.videoKey] ?? null,
+        videoPath: VIDEO_META[best.videoKey]?.path ?? null,
         question: best.question,
         versions,
         bestVersion,
@@ -415,6 +445,13 @@ export async function GET() {
       totalCostUsd: Math.round(liveCostUsd * 10000) / 10000,
       totalWallTimeS: Math.round(liveWallTimeS * 10) / 10,
     },
-    videos: Object.entries(VIDEO_PATHS).map(([key, path]) => ({ key, path })),
+    videos: Object.entries(VIDEO_META).map(([key, meta]) => ({
+      key,
+      path: meta.path,
+      title: meta.title,
+      channel: meta.channel,
+      youtubeUrl: `https://www.youtube.com/watch?v=${meta.youtubeId}`,
+      duration: meta.duration,
+    })),
   });
 }

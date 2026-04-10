@@ -8,6 +8,14 @@ import { NarrativeNote } from "./narrative-note";
 import { TraceTimeline } from "@/components/hud/trace-timeline";
 import { NARRATIVES } from "@/lib/narratives";
 
+const VIDEO_LABELS: Record<string, { title: string; channel: string; url: string }> = {
+  podcast: { title: "RLM Theory Overview feat. Alex L. Zhang", channel: "Deep Learning with Yacine", url: "https://www.youtube.com/watch?v=5RAFKES5J6E" },
+  curry: { title: "Stephen Curry's CRAZIEST Made Threes This Season!", channel: "NBA", url: "https://www.youtube.com/watch?v=zVg3FvMuDlw" },
+  mkbhd: { title: "iPhone 17 Review: No Asterisks!", channel: "Marques Brownlee", url: "https://www.youtube.com/watch?v=rng_yUSwrgU" },
+  football: { title: "Manchester City v Arsenal | FA Cup 2022-23", channel: "The Emirates FA Cup", url: "https://www.youtube.com/watch?v=9gyv2xh7qQw" },
+  tech_talk: { title: "Prompting Is Becoming a Product Surface", channel: "Boundary", url: "https://www.youtube.com/watch?v=qdfwmYTO0Aw" },
+};
+
 interface PromptDetailProps {
   prompt: BenchmarkPrompt;
 }
@@ -108,8 +116,16 @@ export function PromptDetail({ prompt }: PromptDetailProps) {
           {/* Video player spanning full width */}
           {prompt.videoPath && (
             <div className="col-span-2 mb-2">
-              <span className="block text-[9px] font-bold uppercase tracking-[0.15em] text-hud-dim mb-1">
-                Video &mdash; {prompt.videoKey}
+              <span className="block text-[10px] text-hud-dim mb-1">
+                {VIDEO_LABELS[prompt.videoKey] ? (
+                  <a href={VIDEO_LABELS[prompt.videoKey].url} target="_blank" rel="noopener noreferrer" className="hover:text-foreground transition-colors">
+                    <span className="text-foreground">{VIDEO_LABELS[prompt.videoKey].title}</span>
+                    {" "}
+                    <span className="text-hud-dim">by {VIDEO_LABELS[prompt.videoKey].channel}</span>
+                  </a>
+                ) : (
+                  <span className="text-[9px] font-bold uppercase tracking-[0.15em]">Video &mdash; {prompt.videoKey}</span>
+                )}
               </span>
               <video
                 ref={videoRef}

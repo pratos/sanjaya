@@ -136,6 +136,10 @@ export interface LiveRunsData {
 export interface VideoInfo {
   key: string;
   path: string;
+  title: string;
+  channel: string;
+  youtubeUrl: string;
+  duration: string;
 }
 
 export interface BenchmarkData {

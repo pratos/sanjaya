@@ -1,14 +1,41 @@
 # Sanjaya
 
-Sanjaya is an extensible RLM (Recursive Language Model) agent framework with first-class video understanding. The agent writes Python in a sandboxed REPL, executes it, reads the result, and iterates until it can answer.
+Sanjaya is an extensible RLM (Recursive Language Model) inspired agent framework with first-class video understanding. The agent writes Python in a sandboxed REPL, executes it, reads the result, and iterates until it can answer.
 
 ## Why the name “Sanjaya”?
 
-In the Mahabharata, Sanjaya had the boon of divine sight and narrated the Kurukshetra war live to the blind king Dhritarashtra. The name fits this project’s goal: helping a model “see” video evidence and report what happened. (Slight too much, I know :P)
+In the Mahabharata, Sanjaya had the boon of divine sight and narrated the Kurukshetra war live to the blind king Dhritarashtra. The name fits this project’s goal: helping a model “see & hear” video evidence and report what happened.
 
 ## Project status
 
 This project is currently vibe-researched and vibe-coded. The core flows work, but validation is still in progress. It still needs stronger benchmark coverage, especially on long-video evaluations such as LongVideoBench and related datasets.
+
+Pydantic Monty's philosophy about sandboxing has heavily influenced the true RLM parts: `direct context variable access` and a full `stdlib` access. In the project blog:
+
+> Monty is a Python interpreter written in Rust. Not CPython-with-restrictions. Not Python compiled to WASM. A from-scratch bytecode VM that uses Ruff's parser to turn Python source into its own bytecode format.
+
+```
+What it supports:
+
+- Functions (sync and async), closures, comprehensions
+- f-strings, type hints, dataclasses when defined on the host
+- sys, typing, asyncio, pathlib standard library modules. re, datetime, json coming soon
+- External function calls — the mechanism for interacting with the host
+- Snapshotting — serialize execution state mid-flight to bytes, resume later or elsewhere
+- Type checking — ships with ty bundled in the binary
+- Memory, recursion and execution time limits within the interpreter
+- REPL support - from our testing LLMs strongly assume a REPL - that functions and values it previously defined are available when code is next executed
+
+What it doesn't support:
+
+- Classes - coming soon
+- Match statements - coming soon
+- context managers - coming soon
+- Full standard library - we'll add more over time as and when the LLM wants to use it
+- Third-party packages - Monty will probably never support 3rd party libraries.
+```
+
+It sits between implementations of RLM loop & ReACT agent.
 
 ## Quick start
 

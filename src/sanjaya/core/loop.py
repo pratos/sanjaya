@@ -10,7 +10,7 @@ from typing import Any
 from rich.console import Console
 
 from ..tracing.tracer import Tracer
-from .blocks import ExecutionResult, extract_code_blocks, extract_final_answer, format_execution_feedback
+from .blocks import extract_code_blocks, extract_final_answer, format_execution_feedback
 from .budget import BudgetTracker
 from .compaction import compact_history
 from .prompts import next_action_prompt
@@ -37,7 +37,7 @@ class LoopResult:
     wall_time_s: float
 
 
-_VISION_TOOLS = {"vision_query", "vision_query_batched"}
+_VISION_TOOLS = {"vision_query", "vision_query_batched", "caption_frames"}
 _DONE_SUPPRESSION_LIMIT = 1
 _STUCK_WINDOW = 3
 _STUCK_MAX_TRIGGERS = 2
@@ -49,10 +49,16 @@ def _has_vision_tools(repl: AgentREPL) -> bool:
 
 
 def _vision_analysis_done(messages: list[dict[str, str]]) -> bool:
-    """Check if vision_query has been called in any previous execution."""
+    """Check if a vision tool has been called in any previous execution feedback."""
     for msg in messages:
+        if msg.get("role") != "user":
+            continue
         content = msg.get("content", "")
-        if "vision_query(" in content or "vision_query_batched(" in content:
+        if (
+            "vision_query(" in content
+            or "vision_query_batched(" in content
+            or "caption_frames(" in content
+        ):
             return True
     return False
 
@@ -132,14 +138,17 @@ def _run_iteration(
                         sanjaya_output_tokens=usage.output_tokens,
                     )
 
-        # Extract and execute code blocks
+        # Extract and execute code blocks.
+        # All blocks run, but done() is suppressed when it appears alongside
+        # other code blocks — the model must observe results first, then call
+        # done() in a dedicated single-block response.
         code_blocks = extract_code_blocks(response)
 
         if code_blocks:
             _console.print(f"[cyan]📝 Found {len(code_blocks)} code block(s) to execute[/]")
             messages.append({"role": "assistant", "content": response})
 
-            last_result: ExecutionResult | None = None
+            last_result = None
             tool_names = {t.name for t in repl.registry.all_tools()}
             for idx, code in enumerate(code_blocks, start=1):
                 # Detect which tools are called in this code block
@@ -183,6 +192,28 @@ def _run_iteration(
                 feedback = format_execution_feedback(last_result, idx, len(code_blocks))
                 messages.append({"role": "user", "content": feedback})
 
+            # Suppress done() when it appears in a multi-block response.
+            # The model must observe results, then call done() in a dedicated response.
+            if len(code_blocks) > 1 and last_result and last_result.final_answer is not None:
+                _console.print(
+                    "[yellow]⚠️  done() called in a multi-block response — "
+                    "suppressing. Observe your results, then call done() alone.[/]"
+                )
+                repl._is_done = False
+                repl._final_value = None
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "You called done() alongside other code blocks. "
+                        "Review the execution results above, then call done() "
+                        "in a dedicated single-block response with an answer "
+                        "grounded in the observed evidence."
+                    ),
+                })
+                if iter_trace:
+                    iter_trace.record(done_suppressed_multiblock=True, block_count=len(code_blocks))
+                return None  # continue to next iteration
+
             # Check for final answer
             final_answer = extract_final_answer(last_result, response)
             if final_answer is not None:
@@ -203,8 +234,9 @@ def _run_iteration(
                             "You called done() without performing visual analysis. "
                             "The transcript alone is not sufficient. "
                             "Please extract clips with extract_clip(), sample frames with "
-                            "sample_frames(), and analyze them with vision_query() before "
-                            "calling done(). Review the Video Analysis Strategy steps."
+                            "sample_frames(), and analyze them with caption_frames() or "
+                            "vision_query() before calling done(). "
+                            "Review the Video Analysis Strategy steps."
                         ),
                     })
                     # Signal to the loop that we suppressed done()
