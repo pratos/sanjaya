@@ -9,6 +9,10 @@ x-draft-*.md
 media/
 *.mp4
 sanjaya_video.py
+*gz
+.venv-manim
+cf-static
+.wrangler/
 
 nbs/sanjaya_artifacts
 
