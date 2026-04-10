@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "sanjaya",
-  description: "Experimental video analysis via RLMs",
+  description: "Video analysis dashboard",
 };
 
 export default function RootLayout({

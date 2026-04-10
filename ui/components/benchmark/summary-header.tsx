@@ -23,7 +23,7 @@ export function SummaryHeader({ data }: SummaryHeaderProps) {
             sanjaya
           </h1>
           <p className="text-[10px] lowercase tracking-[0.15em] text-hud-dim mt-1">
-            experimental video analysis via rlms
+            video analysis dashboard
           </p>
         </div>
         <div className="flex items-center gap-8">
