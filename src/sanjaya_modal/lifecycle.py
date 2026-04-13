@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import secrets
 import subprocess
 import time
 import urllib.request
@@ -33,6 +34,37 @@ class ModalEndpoint:
 # ── Public helpers ───────────────────────────────────────────
 
 
+def _resolve_auth_token() -> str:
+    """Return the auth token to use, generating one if needed.
+
+    Priority: SANJAYA_MODAL_AUTH_TOKEN env var → .env file → new random token.
+    The resolved token is injected into ``os.environ`` so that when
+    ``modal deploy`` imports ``app.py`` in a subprocess, ``app.py`` reads
+    the *same* token via ``os.environ.get("SANJAYA_MODAL_AUTH_TOKEN")``.
+    """
+    # Already in env (e.g. set by caller or previous deploy in same process)
+    token = os.environ.get("SANJAYA_MODAL_AUTH_TOKEN", "")
+    if token:
+        return token
+
+    # Try .env file
+    dotenv = _PROJECT_ROOT / ".env"
+    if dotenv.exists():
+        for line in dotenv.read_text().splitlines():
+            if line.startswith("SANJAYA_MODAL_AUTH_TOKEN="):
+                token = line.split("=", 1)[1].strip().strip("'\"")
+                if token:
+                    break
+
+    if not token:
+        token = secrets.token_urlsafe(32)
+        logger.info("Generated new auth token (no SANJAYA_MODAL_AUTH_TOKEN configured)")
+
+    # Pin into env so app.py import reads the same value
+    os.environ["SANJAYA_MODAL_AUTH_TOKEN"] = token
+    return token
+
+
 def deploy(gpu: str = "L4") -> ModalEndpoint:
     """Deploy Moondream Photon to Modal and return the endpoint info.
 
@@ -44,8 +76,12 @@ def deploy(gpu: str = "L4") -> ModalEndpoint:
     # Ensure .env is loaded so MOONDREAM_API_KEY propagates to Modal
     _load_dotenv()
 
+    # Resolve auth token BEFORE deploy so app.py gets the same value
+    auth_token = _resolve_auth_token()
+
     env = os.environ.copy()
     env["SANJAYA_MODAL_GPU"] = gpu
+    env["SANJAYA_MODAL_AUTH_TOKEN"] = auth_token
 
     result = subprocess.run(
         ["modal", "deploy", str(_APP_FILE)],
@@ -69,12 +105,7 @@ def deploy(gpu: str = "L4") -> ModalEndpoint:
 
     base = url_match.group(0).rstrip("/")
 
-    # Read the auth token that app.py resolved/generated at import time.
-    # We import it lazily because app.py has a modal dependency and runs
-    # .env parsing + token generation at module scope.
-    from sanjaya_modal.app import AUTH_TOKEN
-
-    return ModalEndpoint(base_url=f"{base}/v1", auth_token=AUTH_TOKEN)
+    return ModalEndpoint(base_url=f"{base}/v1", auth_token=auth_token)
 
 
 def stop() -> None:

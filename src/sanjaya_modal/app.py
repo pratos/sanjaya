@@ -68,7 +68,7 @@ if _MOONDREAM_KEY:
     timeout=86400,
     min_containers=0,
     max_containers=1,
-    scaledown_window=300,
+    scaledown_window=3600,
     secrets=[modal.Secret.from_dict(_secrets_dict)],
 )
 @modal.asgi_app()

@@ -59,6 +59,8 @@ def main() -> None:
     )
 
     args, extra = parser.parse_known_args()
+    # Strip the '--' separator if present (argparse includes it in extra)
+    extra = [a for a in extra if a != "--"]
 
     print(f"{'=' * 60}")
     print(f"  Sanjaya Benchmark — Moondream Photon on Modal ({args.gpu})")
