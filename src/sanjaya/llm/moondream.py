@@ -16,6 +16,8 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
+import threading
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -26,6 +28,18 @@ logger = logging.getLogger(__name__)
 MOONDREAM_CLOUD_BASE = "https://api.moondream.ai/v1"
 MOONDREAM_STATION_BASE = "http://localhost:2020/v1"
 TOKENS_PER_IMAGE = 729
+
+# ── Global concurrency limiter ──────────────────────────────
+# Caps total in-flight HTTP requests to Moondream across *all*
+# MoondreamVisionClient instances in this process.  A single GPU
+# Station processes images sequentially, so flooding it with
+# requests just increases memory pressure and queue depth.
+#
+# Default 4 matches the per-client max_workers default for local
+# Station.  Override via MOONDREAM_MAX_CONCURRENT env var.
+_MAX_CONCURRENT = int(os.environ.get("MOONDREAM_MAX_CONCURRENT", "4"))
+_global_semaphore = threading.BoundedSemaphore(_MAX_CONCURRENT)
+logger.debug("Moondream global concurrency limit: %d", _MAX_CONCURRENT)
 
 
 def is_moondream_spec(model: Any) -> bool:
@@ -82,7 +96,12 @@ class MoondreamVisionClient:
     def _make_request(
         self, endpoint: str, body: dict[str, Any], *, retries: int = 2,
     ) -> dict[str, Any]:
-        """Send a request to a Moondream API endpoint with retry."""
+        """Send a request to a Moondream API endpoint with retry.
+
+        Acquires the module-level ``_global_semaphore`` before each HTTP
+        attempt so the total number of in-flight requests across all
+        client instances stays bounded.
+        """
         import time as _time
 
         url = f"{self._base_url}/{endpoint.lstrip('/')}"
@@ -97,6 +116,7 @@ class MoondreamVisionClient:
 
         last_err: Exception | None = None
         for attempt in range(1 + retries):
+            _global_semaphore.acquire()
             try:
                 req = urllib.request.Request(url, data=payload, headers=headers)
                 with urllib.request.urlopen(req, timeout=90) as resp:
@@ -116,6 +136,8 @@ class MoondreamVisionClient:
                 if attempt < retries:
                     _time.sleep(1.5 * (attempt + 1))
                     logger.debug("Moondream %s retry %d after %s", endpoint, attempt + 1, e)
+            finally:
+                _global_semaphore.release()
 
         raise last_err  # type: ignore[misc]
 
