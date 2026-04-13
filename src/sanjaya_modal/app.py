@@ -126,8 +126,18 @@ def server():
     TOKENS_PER_IMAGE = 729
 
     def _decode(image_url: str) -> Image.Image:
+        """Decode a base64 data-URI into a fully-loaded RGB PIL Image.
+
+        Forces an eager ``.load()`` so broken/truncated JPEGs fail here
+        with a clear error instead of crashing deep inside Photon's
+        ``_image_to_bytes`` re-encode step.
+        """
         payload = image_url.split(",", 1)[1] if "," in image_url else image_url
-        return Image.open(io.BytesIO(base64.b64decode(payload)))
+        img = Image.open(io.BytesIO(base64.b64decode(payload)))
+        img.load()  # force full decode — catches truncated streams
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        return img
 
     # ── Routes ───────────────────────────────────────────────
 
@@ -136,7 +146,12 @@ def server():
 
     async def caption(request):
         body = await request.json()
-        img = _decode(body["image_url"])
+        try:
+            img = _decode(body["image_url"])
+        except Exception as e:
+            return JSONResponse(
+                {"error": "bad_image", "detail": str(e)}, status_code=400,
+            )
         length = body.get("length", "normal")
         result = model.caption(img, length=length)
         text = result["caption"]
@@ -148,7 +163,12 @@ def server():
 
     async def query(request):
         body = await request.json()
-        img = _decode(body["image_url"])
+        try:
+            img = _decode(body["image_url"])
+        except Exception as e:
+            return JSONResponse(
+                {"error": "bad_image", "detail": str(e)}, status_code=400,
+            )
         result = model.query(img, body["question"])
         text = result["answer"]
         out_tokens = max(1, int(len(text.split()) * 1.3))

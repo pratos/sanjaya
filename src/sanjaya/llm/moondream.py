@@ -136,6 +136,22 @@ class MoondreamVisionClient:
                     self._last_had_metrics = True
 
                 return data
+            except urllib.error.HTTPError as e:
+                # 4xx = client error (e.g. bad image) — don't retry
+                if 400 <= e.code < 500:
+                    body = ""
+                    try:
+                        body = e.read().decode(errors="replace")
+                    except Exception:
+                        pass
+                    raise ValueError(
+                        f"Moondream {endpoint} HTTP {e.code}: {body}"
+                    ) from e
+                # 5xx = server error — retry
+                last_err = e
+                if attempt < retries:
+                    _time.sleep(1.5 * (attempt + 1))
+                    logger.debug("Moondream %s retry %d after HTTP %s", endpoint, attempt + 1, e.code)
             except (OSError, TimeoutError) as e:
                 last_err = e
                 if attempt < retries:
@@ -210,8 +226,27 @@ class MoondreamVisionClient:
         return [captions[i] for i in range(len(valid))]
 
     def _load_and_encode(self, path: Path) -> str:
-        """Read a JPEG file and return its base64 encoding."""
-        return base64.b64encode(path.read_bytes()).decode()
+        """Read an image file, validate it via PIL, and return base64-encoded JPEG.
+
+        Forces a full decode → re-encode cycle through PIL so truncated
+        or corrupted frames fail here with a clear error instead of
+        crashing the remote server.
+        """
+        import io
+
+        try:
+            from PIL import Image
+        except ImportError:
+            # PIL not available — fall back to raw bytes (no validation)
+            return base64.b64encode(path.read_bytes()).decode()
+
+        img = Image.open(path)
+        img.load()  # force full pixel decode — catches truncated JPEGs
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=92)
+        return base64.b64encode(buf.getvalue()).decode()
 
     def query_frames(
         self,
