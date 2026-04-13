@@ -19,7 +19,7 @@ QUESTION = "What is shown in this video?"
 def main() -> None:
     agent = Agent(
         max_iterations=4,
-        caption_model="moondream-station:moondream3-preview",
+        caption_model="moondream:moondream3-preview",
     )
 
     print(f"[test] video={VIDEO} ({QUESTION})")

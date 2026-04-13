@@ -199,8 +199,8 @@ def run_prompt(
     agent = Agent(
         model="z-ai/glm-5.1",
         sub_model="openai/gpt-4.1-mini",
-        vision_model="moondream-station:moondream3-preview",
-        caption_model="moondream-station:moondream3-preview",
+        vision_model="moondream:moondream3-preview",
+        caption_model="moondream:moondream3-preview",
         provider=provider,
         prompts=prompt_config,
         max_iterations=max_iterations,
@@ -258,8 +258,8 @@ def run_prompt(
         "config": {
             "max_depth": 2,
             "max_budget_usd": 1.0,
-            "vision_model": "moondream-station:moondream3-preview",
-            "caption_model": "moondream-station:moondream3-preview",
+            "vision_model": "moondream:moondream3-preview",
+            "caption_model": "moondream:moondream3-preview",
             "max_iterations": max_iterations,
         },
         "answer_text": answer.text,

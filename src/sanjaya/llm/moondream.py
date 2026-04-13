@@ -31,13 +31,10 @@ TOKENS_PER_IMAGE = 729
 
 # ── Global concurrency limiter ──────────────────────────────
 # Caps total in-flight HTTP requests to Moondream across *all*
-# MoondreamVisionClient instances in this process.  A single GPU
-# Station processes images sequentially, so flooding it with
-# requests just increases memory pressure and queue depth.
-#
-# Default 4 matches the per-client max_workers default for local
-# Station.  Override via MOONDREAM_MAX_CONCURRENT env var.
-_MAX_CONCURRENT = int(os.environ.get("MOONDREAM_MAX_CONCURRENT", "4"))
+# MoondreamVisionClient instances in this process.  Cloud rate-limits
+# more aggressively than a local Station, so the default is
+# conservative.  Override via MOONDREAM_MAX_CONCURRENT env var.
+_MAX_CONCURRENT = int(os.environ.get("MOONDREAM_MAX_CONCURRENT", "2"))
 _global_semaphore = threading.BoundedSemaphore(_MAX_CONCURRENT)
 logger.debug("Moondream global concurrency limit: %d", _MAX_CONCURRENT)
 
@@ -64,10 +61,13 @@ class MoondreamVisionClient:
         model: str = "moondream3-preview",
         max_workers: int | None = None,
         base_url: str | None = None,
+        auth_token: str | None = None,
     ):
         import os
 
         self._api_key = api_key or os.environ.get("MOONDREAM_API_KEY", "")
+        # Bearer token for self-hosted proxies (e.g. Modal deployment)
+        self._auth_token = auth_token or os.environ.get("MOONDREAM_AUTH_TOKEN", "")
         # Determine base URL: explicit > env > cloud default
         self._base_url = (
             base_url
@@ -75,11 +75,14 @@ class MoondreamVisionClient:
             or MOONDREAM_CLOUD_BASE
         )
         self._is_local = "localhost" in self._base_url or "127.0.0.1" in self._base_url
+        self._is_proxy = bool(self._auth_token) or (
+            not self._is_local and self._base_url != MOONDREAM_CLOUD_BASE
+        )
 
-        if not self._api_key and not self._is_local:
+        if not self._api_key and not self._is_local and not self._is_proxy:
             raise ValueError(
                 "Moondream API key required for cloud. Set MOONDREAM_API_KEY env var, "
-                "pass api_key=, or point base_url= at a local Moondream Station."
+                "pass api_key=, or point base_url= at a local Moondream Station / proxy."
             )
 
         self._model = model
@@ -111,6 +114,8 @@ class MoondreamVisionClient:
             "Content-Type": "application/json",
             "User-Agent": "sanjaya/0.2.0",
         }
+        if self._auth_token:
+            headers["Authorization"] = f"Bearer {self._auth_token}"
         if self._api_key:
             headers["X-Moondream-Auth"] = self._api_key
 
