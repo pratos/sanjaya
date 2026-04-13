@@ -9,7 +9,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from sse_starlette.sse import EventSourceResponse
 
-from sanjaya_api.models import RunRequest, RunResponse
+from sanjaya_api.models import DocumentRunRequest, RunRequest, RunResponse
 from sanjaya_api.services.orchestrator import OrchestratorService
 from sanjaya_api.sse import format_heartbeat, format_sse_event
 
@@ -67,6 +67,17 @@ async def start_run(request: RunRequest) -> RunResponse:
         subtitle_path=request.subtitle_path,
         subtitle_mode=request.subtitle_mode,
         subtitle_api_model=request.subtitle_api_model,
+        max_iterations=request.max_iterations,
+    )
+    return RunResponse(run_id=run_id)
+
+
+@router.post("/runs/document", response_model=RunResponse)
+async def start_document_run(request: DocumentRunRequest) -> RunResponse:
+    """Start a new document analysis run."""
+    run_id = _orchestrator.start_document_run(
+        document_paths=request.document_paths,
+        question=request.question,
         max_iterations=request.max_iterations,
     )
     return RunResponse(run_id=run_id)

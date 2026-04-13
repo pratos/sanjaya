@@ -18,6 +18,14 @@ class RunRequest(BaseModel):
     max_iterations: int = 20
 
 
+class DocumentRunRequest(BaseModel):
+    """Payload to start a document analysis run."""
+
+    document_paths: list[str]
+    question: str
+    max_iterations: int = 12
+
+
 class RunResponse(BaseModel):
     """Response after starting a run."""
 

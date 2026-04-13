@@ -61,6 +61,12 @@ export async function fetchBenchmarks(): Promise<BenchmarkData> {
   return res.json();
 }
 
+export async function fetchDocumentBenchmarks(): Promise<import("./types").DocumentBenchmarkData> {
+  const res = await fetch("/api/document-benchmarks");
+  if (!res.ok) throw new Error("Failed to fetch document benchmarks");
+  return res.json();
+}
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export interface RunRequest {
@@ -118,6 +124,44 @@ export async function submitRun(
   });
   if (!res.ok) {
     throw new Error(`Failed to start run: ${res.status} ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export interface DocumentRunRequest {
+  document_paths: string[];
+  question: string;
+  max_iterations?: number;
+}
+
+export async function uploadDocuments(
+  files: File[]
+): Promise<{ paths: string[]; count: number }> {
+  const formData = new FormData();
+  for (const file of files) {
+    formData.append("files", file);
+  }
+  const res = await fetch("/api/documents/upload", {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `Upload failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function submitDocumentRun(
+  request: DocumentRunRequest
+): Promise<{ run_id: string }> {
+  const res = await fetch(`${API_BASE}/runs/document`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to start document run: ${res.status} ${res.statusText}`);
   }
   return res.json();
 }

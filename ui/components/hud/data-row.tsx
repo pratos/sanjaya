@@ -15,7 +15,7 @@ export function DataRow({
 }: DataRowProps) {
   return (
     <div className={cn("flex items-baseline justify-between gap-4", className)}>
-      <span className="text-[10px] font-bold uppercase tracking-[0.15em] text-hud-dim shrink-0">
+      <span className="text-[12px] font-bold uppercase tracking-[0.15em] text-hud-dim shrink-0">
         {label}
       </span>
       <span

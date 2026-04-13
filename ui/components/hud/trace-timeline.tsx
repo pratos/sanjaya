@@ -259,13 +259,13 @@ export function TraceTimeline({ events, startTime }: TraceTimelineProps) {
   return (
     <Panel title="TRACE TIMELINE" className="h-full flex flex-col">
       {visibleEvents.length === 0 ? (
-        <span className="text-[10px] uppercase tracking-wider text-hud-dim">
+        <span className="text-[12px] uppercase tracking-wider text-hud-dim">
           NO DATA YET
         </span>
       ) : (
         <div
           ref={scrollRef}
-          className="space-y-0 text-[10px] overflow-y-auto flex-1 min-h-0"
+          className="space-y-0 text-[12px] overflow-y-auto flex-1 min-h-0"
         >
           {visibleEvents.map((event, i) => {
             const diff = startTime && event.timestamp ? event.timestamp - startTime : 0;

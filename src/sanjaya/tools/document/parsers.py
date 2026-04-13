@@ -168,6 +168,84 @@ def parse_markdown(path: str, doc_id: str) -> list[DocumentChunk]:
     return chunks
 
 
+def parse_epub(path: str, doc_id: str) -> list[DocumentChunk]:
+    """Parse an EPUB into one chunk per chapter/spine item."""
+    try:
+        import ebooklib
+        from ebooklib import epub
+    except ImportError:
+        raise ImportError("ebooklib is required for EPUB support: pip install ebooklib beautifulsoup4")
+
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:
+        raise ImportError("beautifulsoup4 is required for EPUB support: pip install beautifulsoup4")
+
+    book = epub.read_epub(path)
+
+    # Build a map of title/heading from the TOC for each spine item href.
+    toc_titles: dict[str, str] = {}
+
+    def _walk_toc(entries: Any) -> None:
+        for entry in entries:
+            if isinstance(entry, tuple):
+                section, children = entry
+                if hasattr(section, "href") and hasattr(section, "title"):
+                    href = section.href.split("#")[0]
+                    toc_titles.setdefault(href, section.title)
+                _walk_toc(children)
+            elif hasattr(entry, "href") and hasattr(entry, "title"):
+                href = entry.href.split("#")[0]
+                toc_titles.setdefault(href, entry.title)
+
+    _walk_toc(book.toc)
+
+    chunks: list[DocumentChunk] = []
+    for item in book.get_items():
+        if item.get_type() != ebooklib.ITEM_DOCUMENT:
+            continue
+
+        soup = BeautifulSoup(item.get_body_content(), "html.parser")
+        # Remove script/style
+        for tag in soup(["script", "style"]):
+            tag.decompose()
+        text = soup.get_text(separator="\n", strip=True)
+        # Collapse excessive blank lines
+        text = re.sub(r"\n{3,}", "\n\n", text).strip()
+
+        if not text or len(text) < 20:
+            continue
+
+        href = item.get_name()
+        title = toc_titles.get(href)
+        if not title:
+            # Fall back to first heading in the chapter
+            heading = soup.find(["h1", "h2", "h3"])
+            title = heading.get_text(strip=True) if heading else href
+
+        ci = len(chunks)
+        label = f"chapter: {title}"
+        chunks.append(
+            DocumentChunk(
+                doc_id=doc_id,
+                chunk_index=ci,
+                chunk_label=label,
+                text=text,
+                metadata={
+                    "doc_id": doc_id,
+                    "chunk_index": ci,
+                    "chunk_label": label,
+                    "file_type": "epub",
+                    "file_path": path,
+                    "chapter_title": title,
+                    "chapter_href": href,
+                },
+            )
+        )
+
+    return chunks
+
+
 def parse_text(path: str, doc_id: str) -> list[DocumentChunk]:
     """Parse a plain text file into one chunk per paragraph."""
     content = Path(path).read_text(encoding="utf-8")
@@ -204,6 +282,7 @@ _EXTENSION_MAP: dict[str, str] = {
     ".ppt": "pptx",
     ".md": "md",
     ".markdown": "md",
+    ".epub": "epub",
     ".txt": "txt",
     ".text": "txt",
     ".log": "txt",
@@ -218,6 +297,7 @@ _PARSERS = {
     "pdf": parse_pdf,
     "pptx": parse_pptx,
     "md": parse_markdown,
+    "epub": parse_epub,
     "txt": parse_text,
 }
 

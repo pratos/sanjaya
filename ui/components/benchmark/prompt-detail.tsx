@@ -63,7 +63,7 @@ export function PromptDetail({ prompt }: PromptDetailProps) {
               <button
                 key={v}
                 onClick={() => setActiveVersion(v)}
-                className={`px-4 py-1.5 text-[10px] font-bold uppercase tracking-[0.15em] transition-colors ${
+                className={`px-4 py-1.5 text-[12px] font-bold uppercase tracking-[0.15em] transition-colors ${
                   isActive
                     ? "bg-hud-panel text-foreground border-b-2 border-hud-green"
                     : "text-hud-dim hover:text-foreground"
@@ -91,10 +91,10 @@ export function PromptDetail({ prompt }: PromptDetailProps) {
 
         {/* Question */}
         <div>
-          <span className="block text-[9px] font-bold uppercase tracking-[0.15em] text-hud-dim mb-1">
+          <span className="block text-[13px] font-bold uppercase tracking-[0.15em] text-hud-dim mb-1">
             Question
           </span>
-          <p className="text-[11px] text-hud-label leading-relaxed">
+          <p className="text-[13px] text-hud-label leading-relaxed">
             {prompt.question}
           </p>
         </div>
@@ -102,7 +102,7 @@ export function PromptDetail({ prompt }: PromptDetailProps) {
         {/* Answer summary */}
         {active.answerText && (
           <div>
-            <span className="block text-[9px] font-bold uppercase tracking-[0.15em] text-hud-dim mb-1">
+            <span className="block text-[13px] font-bold uppercase tracking-[0.15em] text-hud-dim mb-1">
               Answer
             </span>
             <p className="text-xs text-foreground leading-relaxed whitespace-pre-wrap">
@@ -116,7 +116,7 @@ export function PromptDetail({ prompt }: PromptDetailProps) {
           {/* Video player spanning full width */}
           {prompt.videoPath && (
             <div className="col-span-2 mb-2">
-              <span className="block text-[10px] text-hud-dim mb-1">
+              <span className="block text-[12px] text-hud-dim mb-1">
                 {VIDEO_LABELS[prompt.videoKey] ? (
                   <a href={VIDEO_LABELS[prompt.videoKey].url} target="_blank" rel="noopener noreferrer" className="hover:text-foreground transition-colors">
                     <span className="text-foreground">{VIDEO_LABELS[prompt.videoKey].title}</span>
@@ -124,7 +124,7 @@ export function PromptDetail({ prompt }: PromptDetailProps) {
                     <span className="text-hud-dim">by {VIDEO_LABELS[prompt.videoKey].channel}</span>
                   </a>
                 ) : (
-                  <span className="text-[9px] font-bold uppercase tracking-[0.15em]">Video &mdash; {prompt.videoKey}</span>
+                  <span className="text-[13px] font-bold uppercase tracking-[0.15em]">Video &mdash; {prompt.videoKey}</span>
                 )}
               </span>
               <video
@@ -141,16 +141,16 @@ export function PromptDetail({ prompt }: PromptDetailProps) {
         {/* Version comparison table */}
         {versionKeys.length > 1 && (
           <div>
-            <span className="block text-[9px] font-bold uppercase tracking-[0.15em] text-hud-dim mb-2">
+            <span className="block text-[13px] font-bold uppercase tracking-[0.15em] text-hud-dim mb-2">
               Version Comparison
             </span>
             <div className="overflow-x-auto">
-              <table className="w-full text-[10px]">
+              <table className="w-full text-[12px]">
                 <thead>
                   <tr className="border-b border-hud-border">
-                    <th className="px-2 py-1 text-left text-[9px] font-bold uppercase tracking-wider text-hud-dim w-24">Metric</th>
+                    <th className="px-2 py-1 text-left text-[13px] font-bold uppercase tracking-wider text-hud-dim w-24">Metric</th>
                     {versionKeys.map((v) => (
-                      <th key={v} className={`px-2 py-1 text-right text-[9px] font-bold uppercase tracking-wider ${v === prompt.bestVersion ? "text-hud-green" : "text-hud-dim"}`}>
+                      <th key={v} className={`px-2 py-1 text-right text-[13px] font-bold uppercase tracking-wider ${v === prompt.bestVersion ? "text-hud-green" : "text-hud-dim"}`}>
                         {v.toUpperCase()}{v === prompt.bestVersion ? " ★" : ""}
                       </th>
                     ))}
@@ -174,7 +174,7 @@ export function PromptDetail({ prompt }: PromptDetailProps) {
           {/* Metrics — only if single version */}
           {versionKeys.length <= 1 && (
             <div className="space-y-1.5 border-r border-hud-border pr-4">
-              <span className="block text-[9px] font-bold uppercase tracking-[0.15em] text-hud-dim mb-2">
+              <span className="block text-[13px] font-bold uppercase tracking-[0.15em] text-hud-dim mb-2">
                 Metrics
               </span>
               <MetricRow label="Iterations" value={String(active.iterations)} />
@@ -204,7 +204,7 @@ export function PromptDetail({ prompt }: PromptDetailProps) {
 
           {/* Structured data */}
           <div className={versionKeys.length <= 1 ? "" : "col-span-2"}>
-            <span className="block text-[9px] font-bold uppercase tracking-[0.15em] text-hud-dim mb-2">
+            <span className="block text-[13px] font-bold uppercase tracking-[0.15em] text-hud-dim mb-2">
               Structured Data — {activeVersion.toUpperCase()}
             </span>
             <AnswerRenderer data={active.answerData} onSeek={handleSeek} />
@@ -213,7 +213,7 @@ export function PromptDetail({ prompt }: PromptDetailProps) {
 
         {/* Trace timeline */}
         {traceLoading && (
-          <span className="text-[10px] uppercase tracking-wider text-hud-dim animate-pulse">
+          <span className="text-[12px] uppercase tracking-wider text-hud-dim animate-pulse">
             Loading trace...
           </span>
         )}
@@ -264,7 +264,7 @@ function ComparisonRow({
 
   return (
     <tr className="border-b border-hud-border/50">
-      <td className="px-2 py-1 text-[9px] uppercase tracking-wider text-hud-dim">{label}</td>
+      <td className="px-2 py-1 text-[13px] uppercase tracking-wider text-hud-dim">{label}</td>
       {versions.map((v, i) => {
         const d2 = data[v];
         if (!d2 || d2.error) {
@@ -297,10 +297,10 @@ function MetricRow({
 }) {
   return (
     <div className="flex items-baseline justify-between gap-2">
-      <span className="text-[9px] uppercase tracking-wider text-hud-dim">
+      <span className="text-[13px] uppercase tracking-wider text-hud-dim">
         {label}
       </span>
-      <span className={`text-[10px] tabular-nums ${color ?? "text-foreground"}`}>
+      <span className={`text-[12px] tabular-nums ${color ?? "text-foreground"}`}>
         {value}
       </span>
     </div>

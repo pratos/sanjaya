@@ -73,7 +73,7 @@ function TimestampCell({
 
 export function AnswerRenderer({ data, onSeek }: AnswerRendererProps) {
   if (!data) {
-    return <span className="text-[11px] text-hud-dim italic">No structured data</span>;
+    return <span className="text-[13px] text-hud-dim italic">No structured data</span>;
   }
 
   const sections: React.ReactNode[] = [];
@@ -114,7 +114,7 @@ export function AnswerRenderer({ data, onSeek }: AnswerRendererProps) {
 
   if (sections.length === 0) {
     return (
-      <pre className="text-[10px] text-hud-dim whitespace-pre-wrap overflow-x-auto">
+      <pre className="text-[12px] text-hud-dim whitespace-pre-wrap overflow-x-auto">
         {JSON.stringify(data, null, 2)}
       </pre>
     );
@@ -153,17 +153,17 @@ function ListSection({ label, items, onSeek }: { label: string; items: Row[]; on
 
   return (
     <div>
-      <span className="block text-[9px] font-bold uppercase tracking-[0.15em] text-hud-dim mb-1">
+      <span className="block text-[13px] font-bold uppercase tracking-[0.15em] text-hud-dim mb-1">
         {label} ({items.length})
       </span>
       <div className="overflow-x-auto">
-        <table className="w-full text-[10px] table-fixed">
+        <table className="w-full text-[12px] table-fixed">
           <thead>
             <tr className="border-b border-hud-border">
               {[...columns, ...arrayColumns].map((col) => (
                 <th
                   key={col}
-                  className="px-2 py-1 text-left text-[9px] font-bold uppercase tracking-wider text-hud-dim"
+                  className="px-2 py-1 text-left text-[13px] font-bold uppercase tracking-wider text-hud-dim"
                 >
                   {formatLabel(col)}
                 </th>
@@ -239,12 +239,12 @@ export function InlineTimestamps({ text, onSeek }: { text: string; onSeek?: (s: 
 function SimpleList({ label, items, onSeek }: { label: string; items: string[]; onSeek?: (s: number) => void }) {
   return (
     <div>
-      <span className="block text-[9px] font-bold uppercase tracking-[0.15em] text-hud-dim mb-1">
+      <span className="block text-[13px] font-bold uppercase tracking-[0.15em] text-hud-dim mb-1">
         {label} ({items.length})
       </span>
       <ul className="space-y-0.5">
         {items.map((item, i) => (
-          <li key={i} className="text-[10px] text-hud-label pl-2 border-l border-hud-border/50">
+          <li key={i} className="text-[12px] text-hud-label pl-2 border-l border-hud-border/50">
             <InlineTimestamps text={item} onSeek={onSeek} />
           </li>
         ))}
@@ -256,12 +256,12 @@ function SimpleList({ label, items, onSeek }: { label: string; items: string[]; 
 function ObjectSection({ label, obj }: { label: string; obj: Row }) {
   return (
     <div>
-      <span className="block text-[9px] font-bold uppercase tracking-[0.15em] text-hud-dim mb-1">
+      <span className="block text-[13px] font-bold uppercase tracking-[0.15em] text-hud-dim mb-1">
         {label}
       </span>
       <div className="space-y-0.5">
         {Object.entries(obj).map(([k, v]) => (
-          <div key={k} className="flex gap-2 text-[10px]">
+          <div key={k} className="flex gap-2 text-[12px]">
             <span className="text-hud-dim shrink-0">{formatLabel(k)}:</span>
             <span className="text-hud-label">{String(v)}</span>
           </div>

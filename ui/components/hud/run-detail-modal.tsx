@@ -155,7 +155,7 @@ export function RunDetailModal({ runId, onClose }: RunDetailModalProps) {
                 </p>
                 {allFrames.map((clip) => (
                   <div key={clip.clipId} className="mb-3">
-                    <p className="text-[10px] uppercase tracking-wider text-hud-dim mb-1.5">
+                    <p className="text-[12px] uppercase tracking-wider text-hud-dim mb-1.5">
                       {clip.clipId}
                       <span className="ml-2 text-hud-amber">
                         {clip.startS.toFixed(0)}s – {clip.endS.toFixed(0)}s
@@ -209,7 +209,7 @@ export function RunDetailModal({ runId, onClose }: RunDetailModalProps) {
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <p className="text-[10px] uppercase tracking-[0.1em] text-hud-dim">{label}</p>
+      <p className="text-[12px] uppercase tracking-[0.1em] text-hud-dim">{label}</p>
       <p className="text-xs font-mono text-foreground/80 mt-0.5">{value}</p>
     </div>
   );
@@ -270,7 +270,7 @@ function TraceRow({ event, relS }: { event: RunManifest["trace_events"][0]; relS
     <div className="border-b border-hud-border/20 last:border-0">
       <button
         onClick={() => expandable && setOpen(!open)}
-        className={`w-full flex items-center gap-2 px-4 py-1.5 text-[11px] text-left ${expandable ? "hover:bg-[#111] cursor-pointer" : "cursor-default"}`}
+        className={`w-full flex items-center gap-2 px-4 py-1.5 text-[13px] text-left ${expandable ? "hover:bg-[#111] cursor-pointer" : "cursor-default"}`}
       >
         <span className="font-mono text-hud-dim w-[5ch] text-right shrink-0">+{relS}s</span>
         <span className={`uppercase font-bold w-[10ch] shrink-0 ${color}`}>{event.kind.replace("_", " ")}</span>

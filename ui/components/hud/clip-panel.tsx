@@ -11,13 +11,13 @@ export function ClipPanel({ clips }: ClipPanelProps) {
   return (
     <Panel title="CLIPS & FRAMES">
       {clips.length === 0 ? (
-        <span className="text-[10px] uppercase tracking-wider text-hud-dim">
+        <span className="text-[12px] uppercase tracking-wider text-hud-dim">
           NO DATA YET
         </span>
       ) : (
         <div className="space-y-0">
           {/* Header */}
-          <div className="grid grid-cols-[1fr_60px_60px_50px] gap-1 text-[9px] text-hud-dim uppercase tracking-wider border-b border-hud-border pb-1 mb-1">
+          <div className="grid grid-cols-[1fr_60px_60px_50px] gap-1 text-[13px] text-hud-dim uppercase tracking-wider border-b border-hud-border pb-1 mb-1">
             <span>CLIP ID</span>
             <span className="text-right">START</span>
             <span className="text-right">END</span>
@@ -27,7 +27,7 @@ export function ClipPanel({ clips }: ClipPanelProps) {
           {clips.map((clip) => (
             <div
               key={clip.clipId}
-              className="grid grid-cols-[1fr_60px_60px_50px] gap-1 text-[10px] py-0.5"
+              className="grid grid-cols-[1fr_60px_60px_50px] gap-1 text-[12px] py-0.5"
             >
               <span className="text-foreground truncate">{clip.clipId}</span>
               <span className="text-right tabular-nums text-hud-dim">

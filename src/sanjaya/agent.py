@@ -605,8 +605,12 @@ class Agent:
             max_timeout_s=remaining_timeout,
         )
 
+        # Cap child iterations: children should find evidence quickly,
+        # not spin for 20 iterations hallucinating content.
+        child_max_iters = min(self.max_iterations, 10)
+
         child_config = LoopConfig(
-            max_iterations=self.max_iterations,
+            max_iterations=child_max_iters,
             max_budget_usd=remaining_budget,
             max_timeout_s=remaining_timeout,
             compaction_threshold=self.compaction_threshold,

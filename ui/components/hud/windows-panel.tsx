@@ -57,7 +57,7 @@ export function WindowsPanel({ events }: WindowsPanelProps) {
   return (
     <Panel title="CANDIDATE WINDOWS">
       {retrievalInfo && (
-        <div className="flex gap-3 mb-2 text-[10px] text-hud-dim">
+        <div className="flex gap-3 mb-2 text-[12px] text-hud-dim">
           <span>
             SUB: <span className="text-hud-blue">{retrievalInfo.subtitleCount}</span>
           </span>
@@ -70,13 +70,13 @@ export function WindowsPanel({ events }: WindowsPanelProps) {
         </div>
       )}
       {windows.length === 0 ? (
-        <span className="text-[10px] uppercase tracking-wider text-hud-dim">
+        <span className="text-[12px] uppercase tracking-wider text-hud-dim">
           NO DATA YET
         </span>
       ) : (
         <div className="space-y-0">
           {/* Header */}
-          <div className="grid grid-cols-[1fr_80px_60px_60px] gap-1 text-[9px] text-hud-dim uppercase tracking-wider border-b border-hud-border pb-1 mb-1">
+          <div className="grid grid-cols-[1fr_80px_60px_60px] gap-1 text-[13px] text-hud-dim uppercase tracking-wider border-b border-hud-border pb-1 mb-1">
             <span>WINDOW</span>
             <span>STRATEGY</span>
             <span className="text-right">START</span>
@@ -86,7 +86,7 @@ export function WindowsPanel({ events }: WindowsPanelProps) {
           {windows.map((w) => (
             <div
               key={w.windowId}
-              className="grid grid-cols-[1fr_80px_60px_60px] gap-1 text-[10px] py-0.5"
+              className="grid grid-cols-[1fr_80px_60px_60px] gap-1 text-[12px] py-0.5"
             >
               <span className="text-foreground truncate">{w.windowId}</span>
               <span

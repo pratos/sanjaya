@@ -47,7 +47,7 @@ export function ProgressBar({
               />
             ))}
           </div>
-          <span className="text-[10px] tabular-nums text-hud-dim whitespace-nowrap">
+          <span className="text-[12px] tabular-nums text-hud-dim whitespace-nowrap">
             {currentIteration}/{maxIterations}
           </span>
         </div>
@@ -67,17 +67,17 @@ export function ProgressBar({
           <DataRow label="SUB-MODEL" value={recursiveModel} />
         )}
         {status === "idle" && (
-          <span className="text-[10px] uppercase tracking-wider text-hud-dim text-center">
+          <span className="text-[12px] uppercase tracking-wider text-hud-dim text-center">
             AWAITING INPUT
           </span>
         )}
         {status === "complete" && (
-          <span className="text-[10px] uppercase tracking-wider text-hud-green text-center font-bold">
+          <span className="text-[12px] uppercase tracking-wider text-hud-green text-center font-bold">
             COMPLETE
           </span>
         )}
         {status === "error" && (
-          <span className="text-[10px] uppercase tracking-wider text-hud-red text-center font-bold">
+          <span className="text-[12px] uppercase tracking-wider text-hud-red text-center font-bold">
             ERROR
           </span>
         )}

@@ -28,7 +28,7 @@ export function Panel({ title, status, children, className }: PanelProps) {
             className={cn("h-1.5 w-1.5 shrink-0", statusColors[status])}
           />
         )}
-        <span className="text-[10px] font-bold uppercase tracking-[0.15em] text-hud-label">
+        <span className="text-[12px] font-bold uppercase tracking-[0.15em] text-hud-label">
           {title}
         </span>
       </div>

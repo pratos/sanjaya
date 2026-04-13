@@ -156,3 +156,50 @@ export interface BenchmarkData {
   liveRuns: LiveRunsData;
   videos: VideoInfo[];
 }
+
+/* ── Document benchmark types ─────────────────────────── */
+
+export interface DocumentResult {
+  promptId: number;
+  promptName: string;
+  collection: string;
+  documentPaths: string[];
+  question: string;
+  answerText: string;
+  answerData: Record<string, unknown> | null;
+  iterations: number;
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  wallTimeS: number;
+  evidenceCount: number;
+  evidenceSources: string[];
+  error?: string;
+  traceEvents?: TraceEvent[] | null;
+}
+
+export interface DocumentPrompt {
+  promptId: number;
+  promptName: string;
+  collection: string;
+  question: string;
+  versions: Record<string, DocumentResult>;
+  bestVersion: string;
+}
+
+export interface DocumentSource {
+  name: string;
+  type: string;
+}
+
+export interface DocumentBenchmarkData {
+  prompts: DocumentPrompt[];
+  summary: {
+    totalPrompts: number;
+    versions: string[];
+    totalCostUsd: number;
+    totalWallTimeS: number;
+    latestVersion: string;
+  };
+  documents: DocumentSource[];
+}

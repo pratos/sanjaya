@@ -47,11 +47,11 @@ export function CollapsiblePanel({
         {status && (
           <span className={cn("h-1.5 w-1.5 shrink-0", statusColors[status])} />
         )}
-        <span className="text-[10px] font-bold uppercase tracking-[0.15em] text-hud-label">
+        <span className="text-[12px] font-bold uppercase tracking-[0.15em] text-hud-label">
           {title}
         </span>
         {count != null && count > 0 && (
-          <span className="text-[9px] tabular-nums text-hud-dim">{count}</span>
+          <span className="text-[13px] tabular-nums text-hud-dim">{count}</span>
         )}
       </button>
       {open && (

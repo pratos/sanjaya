@@ -22,7 +22,7 @@ export function SummaryHeader({ data }: SummaryHeaderProps) {
           <h1 className="text-2xl font-bold tracking-[0.3em] text-foreground lowercase">
             sanjaya
           </h1>
-          <p className="text-[10px] lowercase tracking-[0.15em] text-hud-dim mt-1">
+          <p className="text-[12px] lowercase tracking-[0.15em] text-hud-dim mt-1">
             video analysis dashboard
           </p>
         </div>
@@ -55,7 +55,7 @@ export function SummaryHeader({ data }: SummaryHeaderProps) {
           <div className="h-6 w-px bg-hud-border" />
           <Link
             href="/run"
-            className="flex items-center gap-1.5 border border-foreground px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.2em] text-foreground transition-colors hover:bg-foreground hover:text-background"
+            className="flex items-center gap-1.5 border border-foreground px-3 py-1.5 text-[12px] font-bold uppercase tracking-[0.2em] text-foreground transition-colors hover:bg-foreground hover:text-background"
           >
             <Play size={12} />
             Live Run
@@ -79,11 +79,11 @@ function Stat({
 }) {
   return (
     <div className="flex flex-col items-end gap-0.5">
-      <span className="text-[9px] font-bold uppercase tracking-[0.15em] text-hud-dim">
+      <span className="text-[13px] font-bold uppercase tracking-[0.15em] text-hud-dim">
         {label}
       </span>
       <span
-        className={`${small ? "text-[10px]" : "text-xs"} font-bold tabular-nums ${color ?? "text-foreground"}`}
+        className={`${small ? "text-[12px]" : "text-xs"} font-bold tabular-nums ${color ?? "text-foreground"}`}
       >
         {value}
       </span>

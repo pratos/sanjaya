@@ -64,7 +64,7 @@ export function TokenCounter({ totals, events, isRunning }: TokenCounterProps) {
         {hasData && (
           <>
             <div className="my-2 h-px bg-hud-border" />
-            <div className="text-[9px] uppercase tracking-wider text-hud-dim mb-1">
+            <div className="text-[13px] uppercase tracking-wider text-hud-dim mb-1">
               BY SOURCE
             </div>
             <DataRow

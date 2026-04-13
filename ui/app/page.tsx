@@ -45,7 +45,7 @@ export default function BenchmarkDashboard() {
         <LiveRunHistory data={data.liveRuns} videos={data.videos} />
       </div>
       <footer className="border-t border-hud-border bg-hud-panel px-6 py-6">
-        <span className="block text-[10px] font-bold uppercase tracking-[0.2em] text-hud-dim mb-3">
+        <span className="block text-[12px] font-bold uppercase tracking-[0.2em] text-hud-dim mb-3">
           Video Sources
         </span>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -60,13 +60,13 @@ export default function BenchmarkDashboard() {
               <span className="block text-xs font-bold text-foreground group-hover:text-white transition-colors">
                 {v.title}
               </span>
-              <span className="block text-[10px] text-hud-dim mt-0.5">
+              <span className="block text-[12px] text-hud-dim mt-0.5">
                 {v.channel} &middot; {v.duration}
               </span>
             </a>
           ))}
         </div>
-        <p className="text-[10px] text-hud-dim/60 mt-3">
+        <p className="text-[12px] text-hud-dim/60 mt-3">
           Videos used under fair use for non-commercial research evaluation. All rights belong to the original creators.
         </p>
       </footer>

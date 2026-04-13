@@ -86,13 +86,13 @@ export function FinalAnswerPanel({
               isError ? "bg-hud-red" : "bg-hud-green"
             }`}
           />
-          <span className="text-[10px] font-bold uppercase tracking-[0.15em] text-hud-label">
+          <span className="text-[12px] font-bold uppercase tracking-[0.15em] text-hud-label">
             {isError ? "ERROR" : "FINAL ANSWER"}
           </span>
         </div>
         {!isError && (
           <span
-            className={`text-[9px] uppercase tracking-wider px-2 py-0.5 border ${
+            className={`text-[13px] uppercase tracking-wider px-2 py-0.5 border ${
               isFinal
                 ? "border-hud-green text-hud-green"
                 : isForced
@@ -108,7 +108,7 @@ export function FinalAnswerPanel({
       <div className="p-4 space-y-4">
         {/* Stats row */}
         {!isError && (
-          <div className="flex gap-6 text-[10px]">
+          <div className="flex gap-6 text-[12px]">
             <div>
               <span className="text-hud-dim uppercase tracking-wider">Iterations </span>
               <span className="text-foreground font-bold tabular-nums">{iterations}</span>
@@ -127,7 +127,7 @@ export function FinalAnswerPanel({
         {/* Question */}
         {question && (
           <div>
-            <span className="block text-[10px] font-bold uppercase tracking-[0.15em] text-hud-dim mb-1">
+            <span className="block text-[12px] font-bold uppercase tracking-[0.15em] text-hud-dim mb-1">
               QUESTION
             </span>
             <p className="text-xs text-hud-label">{question}</p>
@@ -143,7 +143,7 @@ export function FinalAnswerPanel({
           </div>
         ) : (
           <div>
-            <span className="block text-[10px] font-bold uppercase tracking-[0.15em] text-hud-dim mb-1">
+            <span className="block text-[12px] font-bold uppercase tracking-[0.15em] text-hud-dim mb-1">
               ANSWER
             </span>
             <p className="text-sm text-foreground leading-relaxed whitespace-pre-wrap break-words">
@@ -155,12 +155,12 @@ export function FinalAnswerPanel({
         {/* Evidence */}
         {evidence.length > 0 && !isError && (
           <div>
-            <span className="block text-[10px] font-bold uppercase tracking-[0.15em] text-hud-dim mb-2">
+            <span className="block text-[12px] font-bold uppercase tracking-[0.15em] text-hud-dim mb-2">
               EVIDENCE ({evidence.length})
             </span>
             <div className="space-y-0">
               {/* Header */}
-              <div className="grid grid-cols-[1fr_60px_60px_2fr] gap-2 text-[9px] text-hud-dim uppercase tracking-wider border-b border-hud-border pb-1 mb-1">
+              <div className="grid grid-cols-[1fr_60px_60px_2fr] gap-2 text-[13px] text-hud-dim uppercase tracking-wider border-b border-hud-border pb-1 mb-1">
                 <span>WINDOW</span>
                 <span className="text-right">START</span>
                 <span className="text-right">END</span>
@@ -169,7 +169,7 @@ export function FinalAnswerPanel({
               {evidence.map((e) => (
                 <div
                   key={e.clipId}
-                  className="grid grid-cols-[1fr_60px_60px_2fr] gap-2 text-[10px] py-0.5"
+                  className="grid grid-cols-[1fr_60px_60px_2fr] gap-2 text-[12px] py-0.5"
                 >
                   <span className="text-foreground truncate">{e.clipId}</span>
                   <span className="text-right tabular-nums text-hud-dim">

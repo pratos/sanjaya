@@ -86,7 +86,7 @@ export default function RunPage() {
           <button
             onClick={reset}
             disabled={isRunning}
-            className="ml-auto text-[10px] uppercase tracking-[0.15em] border border-hud-border px-2 py-1 text-hud-dim hover:text-foreground hover:border-hud-border-active transition-colors disabled:opacity-30"
+            className="ml-auto text-[12px] uppercase tracking-[0.15em] border border-hud-border px-2 py-1 text-hud-dim hover:text-foreground hover:border-hud-border-active transition-colors disabled:opacity-30"
           >
             Reset
           </button>
@@ -119,10 +119,10 @@ export default function RunPage() {
         {videoPath && (
           <div className="border border-hud-border bg-hud-panel">
             <div className="flex items-center gap-2 border-b border-hud-border px-3 py-2">
-              <span className="text-[10px] font-bold uppercase tracking-[0.15em] text-hud-label">
+              <span className="text-[12px] font-bold uppercase tracking-[0.15em] text-hud-label">
                 Video
               </span>
-              <span className="text-[9px] text-hud-dim truncate">{videoPath}</span>
+              <span className="text-[13px] text-hud-dim truncate">{videoPath}</span>
             </div>
             <div className="p-3">
               <video
@@ -158,10 +158,10 @@ export default function RunPage() {
         {history.length > 0 && (
           <div className="border border-hud-border bg-hud-panel">
             <div className="flex items-center gap-2 border-b border-hud-border px-3 py-2">
-              <span className="text-[10px] font-bold uppercase tracking-[0.15em] text-hud-label">
+              <span className="text-[12px] font-bold uppercase tracking-[0.15em] text-hud-label">
                 Session History
               </span>
-              <span className="text-[9px] text-hud-dim">
+              <span className="text-[13px] text-hud-dim">
                 {history.length} run{history.length !== 1 ? "s" : ""}
               </span>
             </div>
@@ -169,7 +169,7 @@ export default function RunPage() {
               {history.map((entry) => (
                 <div
                   key={entry.runId}
-                  className="flex items-center gap-3 px-3 py-2 text-[10px]"
+                  className="flex items-center gap-3 px-3 py-2 text-[12px]"
                 >
                   <span
                     className={`h-1.5 w-1.5 shrink-0 ${

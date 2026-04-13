@@ -11,23 +11,23 @@ interface OverviewTableProps {
 
 function scoreBadge(result: PromptResult | undefined) {
   if (!result || result.error) {
-    return <span className="text-hud-red text-[10px]">ERROR</span>;
+    return <span className="text-hud-red text-[12px]">ERROR</span>;
   }
   // Check if it was a forced answer (hit max iterations without critic pass)
   // We infer this from iterations === 20 and no explicit score stored
   const iters = result.iterations;
   if (iters >= 20) {
-    return <span className="text-hud-amber text-[10px]">FORCED</span>;
+    return <span className="text-hud-amber text-[12px]">FORCED</span>;
   }
   // Otherwise show iteration count as a proxy for quality
   // Lower iterations = passed critic faster = better
   if (iters <= 5) {
-    return <span className="text-hud-green text-[10px] font-bold">{iters} iters</span>;
+    return <span className="text-hud-green text-[12px] font-bold">{iters} iters</span>;
   }
   if (iters <= 10) {
-    return <span className="text-hud-green text-[10px]">{iters} iters</span>;
+    return <span className="text-hud-green text-[12px]">{iters} iters</span>;
   }
-  return <span className="text-hud-amber text-[10px]">{iters} iters</span>;
+  return <span className="text-hud-amber text-[12px]">{iters} iters</span>;
 }
 
 function deltaIndicator(v1: PromptResult | undefined, best: PromptResult | undefined, bestKey: string) {
@@ -35,14 +35,14 @@ function deltaIndicator(v1: PromptResult | undefined, best: PromptResult | undef
     return <span className="text-hud-dim">&mdash;</span>;
   }
   if (best.error) {
-    return <span className="text-hud-red text-[10px]">&darr;</span>;
+    return <span className="text-hud-red text-[12px]">&darr;</span>;
   }
   // Compare iterations (lower is better)
   if (best.iterations < v1.iterations) {
-    return <span className="text-hud-green text-[10px] font-bold">&uarr;</span>;
+    return <span className="text-hud-green text-[12px] font-bold">&uarr;</span>;
   }
   if (best.iterations > v1.iterations) {
-    return <span className="text-hud-red text-[10px]">&darr;</span>;
+    return <span className="text-hud-red text-[12px]">&darr;</span>;
   }
   return <span className="text-hud-dim">=</span>;
 }
@@ -64,7 +64,7 @@ export function OverviewTable({ prompts, latestVersion }: OverviewTableProps) {
     <div className="border border-hud-border bg-hud-panel">
       {/* Header */}
       <div className="border-b border-hud-border px-3 py-2">
-        <span className="text-[10px] font-bold uppercase tracking-[0.15em] text-hud-label">
+        <span className="text-[12px] font-bold uppercase tracking-[0.15em] text-hud-label">
           Prompt Results
         </span>
       </div>
@@ -72,7 +72,7 @@ export function OverviewTable({ prompts, latestVersion }: OverviewTableProps) {
       {/* Table */}
       <table className="w-full text-xs">
         <thead>
-          <tr className="border-b border-hud-border text-[9px] font-bold uppercase tracking-[0.15em] text-hud-dim">
+          <tr className="border-b border-hud-border text-[13px] font-bold uppercase tracking-[0.15em] text-hud-dim">
             <th className="px-3 py-2 text-right w-8">#</th>
             <th className="px-3 py-2 text-left">Prompt</th>
             <th className="px-3 py-2 text-left w-20">Video</th>
@@ -145,7 +145,7 @@ function PromptRow({
           {formatName(prompt.promptName)}
         </td>
         <td className="px-3 py-2">
-          <span className="text-[10px] text-hud-dim border border-hud-border px-1.5 py-0.5">
+          <span className="text-[12px] text-hud-dim border border-hud-border px-1.5 py-0.5">
             {prompt.videoKey}
           </span>
         </td>
@@ -165,11 +165,11 @@ function PromptRow({
         </td>
         <td className="px-3 py-2 text-center">
           {hasMultipleVersions ? (
-            <span className="text-[9px] font-bold text-hud-cyan border border-hud-cyan/30 px-1 py-0.5">
+            <span className="text-[13px] font-bold text-hud-cyan border border-hud-cyan/30 px-1 py-0.5">
               {prompt.bestVersion.toUpperCase()}
             </span>
           ) : (
-            <span className="text-hud-dim text-[10px]">v1</span>
+            <span className="text-hud-dim text-[12px]">v1</span>
           )}
         </td>
         <td className="px-3 py-2 text-center">

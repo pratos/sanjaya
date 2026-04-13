@@ -30,11 +30,11 @@ export function CodeExecutionPanel({
       className="h-full flex flex-col"
     >
       {executions.length === 0 ? (
-        <span className="text-[10px] uppercase tracking-wider text-hud-dim">
+        <span className="text-[12px] uppercase tracking-wider text-hud-dim">
           NO DATA YET
         </span>
       ) : (
-        <div ref={scrollRef} className="space-y-2 text-[10px] overflow-y-auto flex-1 min-h-0">
+        <div ref={scrollRef} className="space-y-2 text-[12px] overflow-y-auto flex-1 min-h-0">
           {executions.map((exec, i) => (
             <div key={i} className="border border-hud-border">
               {/* Header */}
@@ -56,7 +56,7 @@ export function CodeExecutionPanel({
               {/* Stderr */}
               {exec.stderr && (
                 <div className="border-t border-hud-border px-2 py-1">
-                  <span className="text-[9px] text-hud-red uppercase tracking-wider">
+                  <span className="text-[13px] text-hud-red uppercase tracking-wider">
                     STDERR:{" "}
                   </span>
                   <pre className="text-hud-red/70 whitespace-pre-wrap break-all max-h-16 overflow-auto inline">
@@ -67,7 +67,7 @@ export function CodeExecutionPanel({
               {/* Final answer indicator */}
               {exec.hasFinalAnswer && (
                 <div className="border-t border-hud-border px-2 py-1 bg-hud-green/10">
-                  <span className="text-hud-green text-[9px] uppercase tracking-wider font-bold">
+                  <span className="text-hud-green text-[13px] uppercase tracking-wider font-bold">
                     ✓ FINAL ANSWER DETECTED
                   </span>
                 </div>

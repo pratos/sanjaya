@@ -12,19 +12,19 @@ interface LiveRunHistoryProps {
 
 function scoreBadge(result: PromptResult | undefined) {
   if (!result || result.error) {
-    return <span className="text-hud-red text-[10px]">ERROR</span>;
+    return <span className="text-hud-red text-[12px]">ERROR</span>;
   }
   const iters = result.iterations;
   if (iters >= 20) {
-    return <span className="text-hud-amber text-[10px]">FORCED</span>;
+    return <span className="text-hud-amber text-[12px]">FORCED</span>;
   }
   if (iters <= 5) {
-    return <span className="text-hud-green text-[10px] font-bold">{iters} iters</span>;
+    return <span className="text-hud-green text-[12px] font-bold">{iters} iters</span>;
   }
   if (iters <= 10) {
-    return <span className="text-hud-green text-[10px]">{iters} iters</span>;
+    return <span className="text-hud-green text-[12px]">{iters} iters</span>;
   }
-  return <span className="text-hud-amber text-[10px]">{iters} iters</span>;
+  return <span className="text-hud-amber text-[12px]">{iters} iters</span>;
 }
 
 function formatTime(seconds: number): string {
@@ -65,20 +65,20 @@ export function LiveRunHistory({ data, videos }: LiveRunHistoryProps) {
           className="w-full flex items-center justify-between border-b border-hud-border px-3 py-2 hover:bg-hud-border/10 transition-colors"
         >
           <div className="flex items-center gap-3">
-            <span className="text-[10px] font-bold uppercase tracking-[0.15em] text-hud-label">
+            <span className="text-[12px] font-bold uppercase tracking-[0.15em] text-hud-label">
               Live Run History
             </span>
-            <span className="text-[10px] text-hud-dim tabular-nums">
+            <span className="text-[12px] text-hud-dim tabular-nums">
               {data.totalRuns} runs
             </span>
-            <span className="text-[10px] text-hud-dim tabular-nums">
+            <span className="text-[12px] text-hud-dim tabular-nums">
               ${data.totalCostUsd.toFixed(2)} total
             </span>
-            <span className="text-[10px] text-hud-dim tabular-nums">
+            <span className="text-[12px] text-hud-dim tabular-nums">
               {formatTime(data.totalWallTimeS)} total
             </span>
           </div>
-          <span className="text-[10px] text-hud-dim">
+          <span className="text-[12px] text-hud-dim">
             {collapsed ? "+" : "\u2212"}
           </span>
         </button>
@@ -86,11 +86,11 @@ export function LiveRunHistory({ data, videos }: LiveRunHistoryProps) {
         {/* Videos bar */}
         {!collapsed && videos.length > 0 && (
           <div className="border-b border-hud-border px-3 py-1.5 flex items-center gap-2">
-            <span className="text-[9px] uppercase tracking-[0.15em] text-hud-dim">Videos:</span>
+            <span className="text-[13px] uppercase tracking-[0.15em] text-hud-dim">Videos:</span>
             {videos.map((v) => (
               <span
                 key={v.key}
-                className="text-[10px] text-hud-dim border border-hud-border px-1.5 py-0.5"
+                className="text-[12px] text-hud-dim border border-hud-border px-1.5 py-0.5"
               >
                 {v.key}
               </span>
@@ -102,7 +102,7 @@ export function LiveRunHistory({ data, videos }: LiveRunHistoryProps) {
         {!collapsed && (
           <table className="w-full text-xs">
             <thead>
-              <tr className="border-b border-hud-border text-[9px] font-bold uppercase tracking-[0.15em] text-hud-dim">
+              <tr className="border-b border-hud-border text-[13px] font-bold uppercase tracking-[0.15em] text-hud-dim">
                 <th className="px-3 py-2 text-right w-8">#</th>
                 <th className="px-3 py-2 text-left w-24">When</th>
                 <th className="px-3 py-2 text-left">Question</th>
@@ -126,13 +126,13 @@ export function LiveRunHistory({ data, videos }: LiveRunHistoryProps) {
                     <td className="px-3 py-2 text-right tabular-nums text-hud-dim">
                       {runs.length - idx}
                     </td>
-                    <td className="px-3 py-2 text-[10px] text-hud-dim tabular-nums">
+                    <td className="px-3 py-2 text-[12px] text-hud-dim tabular-nums">
                       {formatTimestamp(run.timestamp)}
                     </td>
                     <td className="px-3 py-2 font-bold text-foreground truncate max-w-[400px]">
                       {run.prompt.question}
                     </td>
-                    <td className="px-3 py-2 text-[10px] text-hud-dim">
+                    <td className="px-3 py-2 text-[12px] text-hud-dim">
                       {shortModel(run.model)}
                     </td>
                     <td className="px-3 py-2 text-center">{scoreBadge(result)}</td>

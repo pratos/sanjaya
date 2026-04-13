@@ -38,6 +38,20 @@ You are analyzing text documents. You decide the strategy.
 - Feed accumulated content to llm_query() for synthesis.
 - Always: explore before answering, cite document sources, print results.
 
+### Critical: ground everything in the text
+
+- **Domain vocabulary is fine** — use standard terminology from the question's
+  domain (legal terms, financial metrics, technical jargon) to formulate
+  search queries. This is expected.
+- **Content assumptions are not** — do NOT assume what the document says.
+  Do not pre-populate answers, names, figures, or conclusions from your
+  training data. Every factual claim must come from a chunk you read.
+- Start with terms from the question. Read the results. Use what you
+  *actually found* to formulate follow-up queries.
+- If the question asks "who", "what", or "how much", the answer must emerge
+  from the documents — do not seed your search with specific answers you
+  already know from training.
+
 ### One code block per response. Print everything.
 """
 
@@ -58,6 +72,7 @@ _CHUNK_TYPE_MAP = {
     "pdf": "pages",
     "pptx": "slides",
     "md": "sections",
+    "epub": "chapters",
     "txt": "paragraphs",
 }
 
@@ -264,11 +279,14 @@ class DocumentToolkit(Toolkit):
 
     def _make_read_chunk_tool(self) -> Tool:
         toolkit = self
+        max_chars = 20_000
 
         def _read_chunk(doc_id: str, chunk_index: int) -> dict:
-            """Read the full text of a specific chunk (page, slide, section, or paragraph).
+            """Read the text of a specific chunk (page, slide, section, or paragraph).
 
-            Use after search_documents() to get the complete content of a matching chunk.
+            Use after search_documents() to get the content of a matching chunk.
+            Large chunks are capped at 20K chars — use search_documents() to
+            find the relevant passages within them.
             """
             chunks = toolkit._chunks.get(doc_id)
             if chunks is None:
@@ -277,12 +295,26 @@ class DocumentToolkit(Toolkit):
             for c in chunks:
                 if c.chunk_index == chunk_index:
                     toolkit._accessed_chunks.add((doc_id, chunk_index))
-                    return {
+                    text = c.text
+                    truncated = False
+                    if len(text) > max_chars:
+                        text = text[:max_chars]
+                        truncated = True
+                    result: dict = {
                         "doc_id": doc_id,
                         "chunk_index": chunk_index,
                         "chunk_label": c.chunk_label,
-                        "text": c.text,
+                        "text": text,
+                        "total_chars": len(c.text),
                     }
+                    if truncated:
+                        result["truncated"] = True
+                        result["hint"] = (
+                            f"Chunk is {len(c.text)} chars, showing first {max_chars}. "
+                            "Use search_documents() with specific keywords to find "
+                            "relevant passages within this chunk."
+                        )
+                    return result
 
             return {
                 "error": f"chunk_index {chunk_index} not found in {doc_id}. Valid range: 0-{len(chunks) - 1}."
@@ -290,7 +322,7 @@ class DocumentToolkit(Toolkit):
 
         return Tool(
             name="read_chunk",
-            description="Read the full text of a specific chunk (page, slide, section, paragraph) by doc_id and chunk_index.",
+            description="Read the text of a specific chunk (page, slide, section, paragraph) by doc_id and chunk_index. Large chunks are capped at 20K chars.",
             fn=_read_chunk,
             parameters={
                 "doc_id": ToolParam(name="doc_id", type_hint="str", description="Document ID from list_documents()."),

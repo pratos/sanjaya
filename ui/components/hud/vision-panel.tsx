@@ -26,16 +26,16 @@ export function VisionPanel({ queries }: VisionPanelProps) {
   return (
     <Panel title="VISION QUERIES" className="h-full flex flex-col">
       {queries.length === 0 ? (
-        <span className="text-[10px] uppercase tracking-wider text-hud-dim">
+        <span className="text-[12px] uppercase tracking-wider text-hud-dim">
           NO DATA YET
         </span>
       ) : (
-        <div ref={scrollRef} className="space-y-2 text-[10px] overflow-y-auto flex-1 min-h-0">
+        <div ref={scrollRef} className="space-y-2 text-[12px] overflow-y-auto flex-1 min-h-0">
           {queries.map((v, i) => (
             <div key={i} className="border border-hud-border p-2 space-y-1.5">
               {/* Prompt */}
               <div className="text-hud-dim truncate">
-                <span className="text-[9px] text-hud-label uppercase tracking-wider">
+                <span className="text-[13px] text-hud-label uppercase tracking-wider">
                   PROMPT:{" "}
                 </span>
                 {v.prompt}

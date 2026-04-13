@@ -114,7 +114,7 @@ export function QueryInput({ onSubmit, onVideoChange, disabled }: QueryInputProp
           )}
           {/* Transcript status */}
           {selectedVideo && (
-            <p className={`mt-1 text-[10px] uppercase tracking-[0.1em] ${
+            <p className={`mt-1 text-[12px] uppercase tracking-[0.1em] ${
               selectedVideo.hasTranscript ? "text-hud-green" : "text-hud-dim"
             }`}>
               {selectedVideo.hasTranscript

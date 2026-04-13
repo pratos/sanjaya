@@ -69,7 +69,7 @@ export function StatusBar({
       {/* Center: Iteration */}
       <div className="flex items-center gap-6">
         <div className="flex items-center gap-2">
-          <span className="text-[10px] uppercase tracking-wider text-hud-dim">
+          <span className="text-[12px] uppercase tracking-wider text-hud-dim">
             ITERATION
           </span>
           <span className="text-xs font-bold tabular-nums">
@@ -78,7 +78,7 @@ export function StatusBar({
         </div>
         <div className="h-3 w-px bg-hud-border" />
         <div className="flex items-center gap-2">
-          <span className="text-[10px] uppercase tracking-wider text-hud-dim">
+          <span className="text-[12px] uppercase tracking-wider text-hud-dim">
             ELAPSED
           </span>
           <span className="text-xs font-bold tabular-nums">
@@ -89,7 +89,7 @@ export function StatusBar({
 
       {/* Right: Run ID */}
       <div className="flex items-center gap-2">
-        <span className="text-[10px] uppercase tracking-wider text-hud-dim">
+        <span className="text-[12px] uppercase tracking-wider text-hud-dim">
           RUN
         </span>
         <span className="text-xs tabular-nums text-hud-dim">

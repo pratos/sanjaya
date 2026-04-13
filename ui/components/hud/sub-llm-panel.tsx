@@ -25,23 +25,23 @@ export function SubLLMPanel({ calls }: SubLLMPanelProps) {
   return (
     <Panel title="SUB-LLM QUERIES" className="h-full flex flex-col">
       {calls.length === 0 ? (
-        <span className="text-[10px] uppercase tracking-wider text-hud-dim">
+        <span className="text-[12px] uppercase tracking-wider text-hud-dim">
           NO DATA YET
         </span>
       ) : (
-        <div ref={scrollRef} className="space-y-2 text-[10px] overflow-y-auto flex-1 min-h-0">
+        <div ref={scrollRef} className="space-y-2 text-[12px] overflow-y-auto flex-1 min-h-0">
           {calls.map((call, i) => (
             <div key={i} className="border border-hud-border p-2">
               {/* Prompt */}
               <div className="text-hud-dim mb-1">
-                <span className="text-[9px] text-hud-label uppercase tracking-wider">
+                <span className="text-[13px] text-hud-label uppercase tracking-wider">
                   PROMPT:{" "}
                 </span>
                 <span className="truncate">{call.promptPreview}</span>
               </div>
               {/* Response */}
               <div className="text-foreground mb-1">
-                <span className="text-[9px] text-hud-label uppercase tracking-wider">
+                <span className="text-[13px] text-hud-label uppercase tracking-wider">
                   RESPONSE:{" "}
                 </span>
                 <span className="truncate">{call.responsePreview}</span>
