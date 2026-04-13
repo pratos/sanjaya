@@ -35,6 +35,8 @@ class Tool:
 class Toolkit(ABC):
     """Bundle of related tools with shared state."""
 
+    _prompt_config: Any = None  # Injected by Agent, type is PromptConfig
+
     @abstractmethod
     def tools(self) -> list[Tool]:
         """Return all tools this toolkit provides."""

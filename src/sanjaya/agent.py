@@ -19,6 +19,7 @@ from .core.loop import LoopConfig, LoopResult, _model_label, run_loop
 from .core.prompts import build_system_prompt
 from .core.repl import AgentREPL
 from .llm.client import LLMClient, ModelSpec
+from .prompts import PromptConfig
 from .tools.base import Tool, Toolkit
 from .tools.builtins import (
     make_context_tool,
@@ -82,13 +83,14 @@ class Agent:
 
     def __init__(
         self,
-        model: ModelSpec = "openrouter:openai/gpt-5.3-codex",
+        model: ModelSpec = "openrouter:z-ai/glm-5.1",
         sub_model: ModelSpec = "openrouter:openai/gpt-4.1-mini",
-        vision_model: ModelSpec | None = None,
-        caption_model: ModelSpec | None = None,
+        vision_model: ModelSpec | None = "moondream-station:moondream3-preview",
+        caption_model: ModelSpec | None = "moondream-station:moondream3-preview",
         fallback_model: ModelSpec | None = None,
         critic_model: ModelSpec | None = "openrouter:qwen/qwen3-30b-a3b-thinking-2507",
         *,
+        prompts: PromptConfig | None = None,
         provider: Provider | None = None,
         max_iterations: int = 8,
         max_depth: int = 1,
@@ -107,6 +109,7 @@ class Agent:
         if fallback_model is not None:
             fallback_model = _resolve_model(fallback_model, provider, primary=model)
 
+        self._prompts = prompts or PromptConfig()
         self.model = model
         self.sub_model = sub_model
         self.vision_model = vision_model
@@ -178,6 +181,7 @@ class Agent:
                     item._budget = self._budget
                 if hasattr(item, "_captioner") and self._captioner is not None:
                     item._captioner = self._captioner
+                item._prompt_config = self._prompts
                 self._registry.register_toolkit(item)
             elif isinstance(item, Tool):
                 self._registry.register(item)
@@ -193,6 +197,7 @@ class Agent:
         video: str | None = None,
         subtitle: str | None = None,
         document: str | list[str] | None = None,
+        image: str | list[str] | None = None,
     ) -> Answer:
         """Run the RLM loop and return a structured answer."""
         start_time = time.time()
@@ -206,6 +211,7 @@ class Agent:
             vt._budget = self._budget
             if self._captioner is not None:
                 vt._captioner = self._captioner
+            vt._prompt_config = self._prompts
             self._registry.register_toolkit(vt)
 
         # Auto-register DocumentToolkit if document= provided and none registered
@@ -215,7 +221,20 @@ class Agent:
             dt._llm_client = self._sub_llm
             dt._tracer = self._tracer
             dt._budget = self._budget
+            dt._prompt_config = self._prompts
             self._registry.register_toolkit(dt)
+
+        # Auto-register ImageToolkit if image= provided and none registered
+        if image and not self._has_image_toolkit():
+            from .tools.image import ImageToolkit
+            it = ImageToolkit()
+            it._llm_client = self._sub_llm
+            it._tracer = self._tracer
+            it._budget = self._budget
+            it._prompt_config = self._prompts
+            if self._captioner is not None:
+                it._captioner = self._captioner
+            self._registry.register_toolkit(it)
 
         # Build context dict for toolkits (modality classified later, inside the
         # completion span, so the sub_llm call shows up under sanjaya.completion)
@@ -225,6 +244,7 @@ class Agent:
             "video": video,
             "subtitle": subtitle,
             "document": document,
+            "image": image,
             "modality": "balanced",
         }
 
@@ -395,14 +415,17 @@ class Agent:
                     max_depth=self._max_depth,
                 )
 
-            # Generate answer schema for this question
+            # Generate or use provided answer schema
             from .core.schema import generate_answer_schema, schema_to_prompt_section
 
-            with self._tracer._span("sanjaya.schema_generation", question_chars=len(question)):
-                answer_schema = generate_answer_schema(
-                    question=question,
-                    llm_client=self._sub_llm,
-                )
+            if self._prompts.answer_schema is not None:
+                answer_schema = self._prompts.answer_schema
+            else:
+                with self._tracer._span("sanjaya.schema_generation", question_chars=len(question)):
+                    answer_schema = generate_answer_schema(
+                        question=question,
+                        llm_client=self._sub_llm,
+                    )
             self._current_schema = answer_schema
             system_prompt = system_prompt + "\n\n" + schema_to_prompt_section(answer_schema)
 
@@ -416,6 +439,7 @@ class Agent:
                 tracer=self._tracer,
                 critic=self._critic,
                 answer_schema=answer_schema,
+                critic_prompt=self._prompts.critic,
             )
 
             # Collect evidence from toolkits
@@ -723,5 +747,13 @@ class Agent:
         try:
             from .tools.document import DocumentToolkit
             return any(isinstance(tk, DocumentToolkit) for tk in self._registry.toolkits)
+        except ImportError:
+            return False
+
+    def _has_image_toolkit(self) -> bool:
+        """Check if an ImageToolkit is already registered."""
+        try:
+            from .tools.image import ImageToolkit
+            return any(isinstance(tk, ImageToolkit) for tk in self._registry.toolkits)
         except ImportError:
             return False

@@ -34,6 +34,10 @@ subtitles *args:
 demo *ids:
 	uv run python scripts/run_demo_prompts.py {{ if ids == "" { "" } else { "--prompt " + ids } }}
 
+# Run demo prompts against images (pass --image and --question for ad-hoc).
+demo-images *args:
+	uv run python scripts/run_demo_images.py {{args}}
+
 # Inspect latest persisted trace (or pass manifest/run_id).
 video-trace manifest="" run_id="":
 	if [[ -n "{{manifest}}" ]]; then uv run python scripts/inspect_video_trace.py --manifest "{{manifest}}"; elif [[ -n "{{run_id}}" ]]; then uv run python scripts/inspect_video_trace.py --run-id "{{run_id}}"; else uv run python scripts/inspect_video_trace.py; fi

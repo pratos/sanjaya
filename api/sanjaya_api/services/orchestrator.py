@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from sanjaya import Agent, Answer
 from sanjaya.tools.document import DocumentToolkit
+from sanjaya.tools.image import ImageToolkit
 from sanjaya.tools.video import VideoToolkit
 from sanjaya.tracing import Tracer
 
@@ -98,6 +99,59 @@ class OrchestratorService:
                 question,
                 video=resolved_video,
                 subtitle=subtitle_path,
+            )
+
+            record.answer = answer
+            record.status = "complete"
+        except Exception as exc:
+            record.error = str(exc)
+            record.status = "error"
+
+    def start_image_run(
+        self,
+        image_paths: list[str],
+        question: str,
+        max_iterations: int = 10,
+    ) -> str:
+        """Start an image analysis run in a background thread."""
+        run_id = uuid4().hex[:12]
+        record = RunRecord(run_id=run_id)
+
+        with self._lock:
+            self._runs[run_id] = record
+
+        thread = threading.Thread(
+            target=self._run_image_completion,
+            args=(record, image_paths, question, max_iterations),
+            daemon=True,
+        )
+        record.thread = thread
+        thread.start()
+        return run_id
+
+    def _run_image_completion(
+        self,
+        record: RunRecord,
+        image_paths: list[str],
+        question: str,
+        max_iterations: int,
+    ) -> None:
+        """Execute Agent.ask() with ImageToolkit in a background thread."""
+        record.status = "running"
+
+        tracer = Tracer(track_events=True)
+        record.tracer = tracer
+
+        try:
+            agent = Agent(max_iterations=max_iterations, tracing=True)
+            agent._tracer = tracer
+            agent.use(ImageToolkit())
+
+            image_arg: str | list[str] = image_paths[0] if len(image_paths) == 1 else image_paths
+
+            answer = agent.ask(
+                question,
+                image=image_arg,
             )
 
             record.answer = answer

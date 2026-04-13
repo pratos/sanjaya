@@ -289,10 +289,18 @@ class VideoToolkit(Toolkit):
         ]
 
     def prompt_section(self) -> str | None:
-        if self._modality == "vision_primary":
-            parts = [_VISION_FIRST_STRATEGY_PROMPT]
+        # User override via PromptConfig takes precedence
+        if self._prompt_config is not None:
+            if self._modality == "vision_primary" and self._prompt_config.video_vision_first_strategy:
+                base = self._prompt_config.video_vision_first_strategy
+            elif self._prompt_config.video_strategy:
+                base = self._prompt_config.video_strategy
+            else:
+                base = _VISION_FIRST_STRATEGY_PROMPT if self._modality == "vision_primary" else _VIDEO_STRATEGY_PROMPT
         else:
-            parts = [_VIDEO_STRATEGY_PROMPT]
+            base = _VISION_FIRST_STRATEGY_PROMPT if self._modality == "vision_primary" else _VIDEO_STRATEGY_PROMPT
+
+        parts = [base]
         if self._transcript_text:
             parts.append(
                 "\n## Transcript\n"

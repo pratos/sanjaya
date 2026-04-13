@@ -68,13 +68,15 @@ def evaluate_answer(
     critic_client: Any,
     threshold: int = 70,
     budget: Any | None = None,
+    critic_prompt: str | None = None,
 ) -> dict[str, Any]:
     """Run the critic on a structured answer.
 
     Returns a dict with: score (0-100), pass (bool), gaps (list), feedback (str).
     If the critic call fails, accepts the answer to avoid blocking.
     """
-    prompt = CRITIC_PROMPT.format(
+    template = critic_prompt or CRITIC_PROMPT
+    prompt = template.format(
         question=question,
         schema=json.dumps(schema, indent=2),
         answer=json.dumps(answer, indent=2, default=str) if isinstance(answer, dict) else str(answer),

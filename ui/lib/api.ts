@@ -67,6 +67,12 @@ export async function fetchDocumentBenchmarks(): Promise<import("./types").Docum
   return res.json();
 }
 
+export async function fetchImageBenchmarks(): Promise<import("./types").ImageBenchmarkData> {
+  const res = await fetch("/api/image-benchmarks");
+  if (!res.ok) throw new Error("Failed to fetch image benchmarks");
+  return res.json();
+}
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export interface RunRequest {
@@ -148,6 +154,44 @@ export async function uploadDocuments(
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     throw new Error(data.error || `Upload failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export interface ImageRunRequest {
+  image_paths: string[];
+  question: string;
+  max_iterations?: number;
+}
+
+export async function uploadImages(
+  files: File[]
+): Promise<{ paths: string[]; count: number }> {
+  const formData = new FormData();
+  for (const file of files) {
+    formData.append("files", file);
+  }
+  const res = await fetch("/api/images/upload", {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `Upload failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function submitImageRun(
+  request: ImageRunRequest
+): Promise<{ run_id: string }> {
+  const res = await fetch(`${API_BASE}/runs/image`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to start image run: ${res.status} ${res.statusText}`);
   }
   return res.json();
 }

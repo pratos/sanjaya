@@ -102,8 +102,10 @@ def _compute_cost(model_name: str, input_tokens: int, output_tokens: int) -> flo
 
 
 def _moondream_cost(input_tokens: int, output_tokens: int) -> float:
-    """Compute Moondream cost at $0.30/1M input, $2.50/1M output."""
-    return (input_tokens * 0.30 + output_tokens * 2.50) / 1_000_000
+    """Compute Moondream cost based on cloud pricing."""
+    from .pricing import moondream_cost
+
+    return moondream_cost(input_tokens, output_tokens)
 
 
 class LLMClient:

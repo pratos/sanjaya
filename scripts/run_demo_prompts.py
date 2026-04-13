@@ -17,6 +17,7 @@ from pathlib import Path
 from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 from sanjaya import Agent
+from sanjaya.prompts import PromptConfig
 from sanjaya.tools.video import VideoToolkit
 
 # ── Video paths ──────────────────────────────────────────────
@@ -182,7 +183,11 @@ def _check_subtitle_exists(video_path: str) -> bool:
     return any(c.exists() for c in candidates)
 
 
-def run_prompt(prompt: dict, max_iterations: int = 20) -> dict:
+def run_prompt(
+    prompt: dict,
+    max_iterations: int = 20,
+    prompt_config: PromptConfig | None = None,
+) -> dict:
     """Run a single prompt and return results."""
     video_cfg = VIDEOS[prompt["video_key"]]
 
@@ -192,6 +197,7 @@ def run_prompt(prompt: dict, max_iterations: int = 20) -> dict:
         sub_model="openai/gpt-4.1-mini",
         caption_model="moondream:moondream3-preview",
         provider=provider,
+        prompts=prompt_config,
         max_iterations=max_iterations,
         tracing=True,
     )
@@ -214,7 +220,6 @@ def run_prompt(prompt: dict, max_iterations: int = 20) -> dict:
         print(f"⚠️  Configured subtitle not found: {subtitle_path}")
         subtitle_path = None
 
-    sub_gen_start = time.time()
     start = time.time()
     answer = agent.ask(
         prompt["question"],
@@ -241,6 +246,7 @@ def run_prompt(prompt: dict, max_iterations: int = 20) -> dict:
         "prompt_name": prompt["name"],
         "video_key": prompt["video_key"],
         "question": prompt["question"],
+        "prompt_config": prompt_config.to_dict() if prompt_config else None,
         "answer_text": answer.text,
         "answer_data": answer.data,
         "iterations": answer.iterations,
@@ -254,7 +260,7 @@ def run_prompt(prompt: dict, max_iterations: int = 20) -> dict:
         "trace_events": trace_events,
     }
 
-    print(f"\n--- Result ---")
+    print("\n--- Result ---")
     print(f"Answer: {answer.text[:200]}...")
     print(f"Iterations: {answer.iterations}")
     print(f"Cost: ${answer.cost_usd:.6f}")
@@ -286,10 +292,22 @@ def main():
         default=None,
         help="Output directory for results (default: data/demo_results)",
     )
+    parser.add_argument(
+        "--prompts-yaml",
+        type=str,
+        default=None,
+        help="Path to a PromptConfig YAML file (overrides strategy/critic prompts)",
+    )
     args = parser.parse_args()
 
     results_dir = Path(args.output_dir) if args.output_dir else RESULTS_DIR
     results_dir.mkdir(parents=True, exist_ok=True)
+
+    prompt_config = None
+    if args.prompts_yaml:
+        prompt_config = PromptConfig.from_yaml(args.prompts_yaml)
+        print(f"Loaded PromptConfig from {args.prompts_yaml}")
+        print(f"  Overrides: {list(prompt_config.to_dict().keys())}")
 
     prompts_to_run = PROMPTS
     if args.prompt:
@@ -301,7 +319,7 @@ def main():
     all_results = []
     for prompt in prompts_to_run:
         try:
-            result = run_prompt(prompt, max_iterations=args.max_iterations)
+            result = run_prompt(prompt, max_iterations=args.max_iterations, prompt_config=prompt_config)
             all_results.append(result)
 
             # Save individual result

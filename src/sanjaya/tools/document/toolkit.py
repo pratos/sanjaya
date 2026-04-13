@@ -10,7 +10,6 @@ from ...retrieval.sqlite_fts import SQLiteFTSBackend
 from ..base import Tool, Toolkit, ToolParam
 from .parsers import DocumentChunk, parse_document
 
-
 _DOCUMENT_STRATEGY_PROMPT = """\
 ## Available Tools
 
@@ -199,7 +198,12 @@ class DocumentToolkit(Toolkit):
         if not self._documents:
             return None
 
-        parts = [_DOCUMENT_STRATEGY_PROMPT]
+        if self._prompt_config is not None and self._prompt_config.document_strategy:
+            base = self._prompt_config.document_strategy
+        else:
+            base = _DOCUMENT_STRATEGY_PROMPT
+
+        parts = [base]
 
         doc_summaries = []
         for info in self._documents.values():

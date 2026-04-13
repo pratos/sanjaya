@@ -203,3 +203,43 @@ export interface DocumentBenchmarkData {
   };
   documents: DocumentSource[];
 }
+
+/* ── Image benchmark types ────────────────────────────── */
+
+export interface ImageResult {
+  promptId: number;
+  promptName: string;
+  imagePaths: string[];
+  question: string;
+  answerText: string;
+  answerData: Record<string, unknown> | null;
+  groundTruth: string | null;
+  iterations: number;
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  wallTimeS: number;
+  evidenceCount: number;
+  evidenceSources: string[];
+  error?: string;
+  traceEvents?: TraceEvent[] | null;
+}
+
+export interface ImagePrompt {
+  promptId: number;
+  promptName: string;
+  question: string;
+  versions: Record<string, ImageResult>;
+  bestVersion: string;
+}
+
+export interface ImageBenchmarkData {
+  prompts: ImagePrompt[];
+  summary: {
+    totalPrompts: number;
+    versions: string[];
+    totalCostUsd: number;
+    totalWallTimeS: number;
+    latestVersion: string;
+  };
+}

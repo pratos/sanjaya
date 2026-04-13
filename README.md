@@ -23,17 +23,20 @@ pip install sanjaya
 ```bash
 uv add "sanjaya[video]"
 uv add "sanjaya[document]"
+uv add "sanjaya[image]"
 uv add "sanjaya[all]"
 
 # or
 pip install "sanjaya[video]"
 pip install "sanjaya[document]"
+pip install "sanjaya[image]"
 pip install "sanjaya[all]"
 ```
 
 Extras:
 
 - `video` — video analysis dependencies
+- `image` — image analysis dependencies (Pillow, HEIC, SVG)
 - `document` — PDF/EPUB/PPTX/Markdown/text document parsing dependencies
 - `tracing` — tracing integrations
 - `all` — all optional features
@@ -99,6 +102,35 @@ print(answer.evidence)
 Supported document types include `.pdf`, `.epub`, `.pptx/.ppt`, `.md`, and `.txt`.
 
 When `document=...` is provided, `DocumentToolkit` is auto-registered if needed.
+
+## Image analysis
+
+```python
+from sanjaya import Agent
+
+agent = Agent(max_iterations=10)
+
+answer = agent.ask(
+    "What text is visible in this screenshot?",
+    image="/path/to/screenshot.png",
+)
+
+print(answer.text)
+print(answer.evidence)
+```
+
+Multiple images:
+
+```python
+answer = agent.ask(
+    "Compare these two charts and summarize differences.",
+    image=["/path/to/chart_q1.png", "/path/to/chart_q2.png"],
+)
+```
+
+Supported formats: JPEG, PNG, WebP, GIF, TIFF, BMP, HEIC (requires `sanjaya[image]`), SVG (requires `sanjaya[image]`).
+
+When `image=...` is provided, `ImageToolkit` is auto-registered if needed.
 
 ## Custom tools
 

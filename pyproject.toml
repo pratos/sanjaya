@@ -21,9 +21,15 @@ dependencies = [
 
 [project.optional-dependencies]
 video = ["logfire", "Pillow>=10.0"]
+image = ["Pillow>=10.0", "pillow-heif>=0.16", "cairosvg>=2.7"]
 document = ["pymupdf>=1.24", "python-pptx>=1.0", "ebooklib>=0.18", "beautifulsoup4>=4.12"]
 tracing = ["logfire"]
-all = ["sanjaya[video,tracing,document]"]
+all = ["sanjaya[video,tracing,document,image]"]
+benchmarks = [
+    "datasets>=3.0",
+    "numpy>=1.26",
+    "Pillow>=10.0",
+]
 dev = [
     "ruff",
     "pytest",

@@ -105,6 +105,7 @@ def _run_iteration(
     done_suppression_count: int = 0,
     critic: Any | None = None,
     answer_schema: dict[str, Any] | None = None,
+    critic_prompt: str | None = None,
 ) -> LoopResult | None:
     """Run a single iteration, wrapped in tracer spans. Returns LoopResult if done."""
 
@@ -256,6 +257,7 @@ def _run_iteration(
                         critic_client=critic,
                         threshold=config.critic_threshold,
                         budget=budget,
+                        critic_prompt=critic_prompt,
                     )
                     score = eval_result.get("score", 0)
                     _console.print(f"[dim]Critic score: {score}/100[/]")
@@ -346,6 +348,7 @@ def run_loop(
     tracer: Tracer | None = None,
     critic: Any | None = None,
     answer_schema: dict[str, Any] | None = None,
+    critic_prompt: str | None = None,
 ) -> LoopResult:
     """The RLM iteration loop.
 
@@ -398,6 +401,7 @@ def run_loop(
             done_suppression_count=done_suppression_count,
             critic=critic,
             answer_schema=answer_schema,
+            critic_prompt=critic_prompt,
         )
         if result is not None:
             return result

@@ -23,6 +23,7 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=True)
 from pydantic_ai.providers.openrouter import OpenRouterProvider  # noqa: E402
 
 from sanjaya import Agent  # noqa: E402
+from sanjaya.prompts import PromptConfig  # noqa: E402
 from sanjaya.tools.document import DocumentToolkit  # noqa: E402
 
 # ── Document collections ────────────────────────────────────
@@ -68,11 +69,17 @@ RESULTS_DIR = Path(__file__).resolve().parent.parent / "data" / "demo_document_r
 
 # Override with env var for versioned output
 import os as _os
+
 if _os.getenv("DOC_RESULTS_DIR"):
     RESULTS_DIR = Path(_os.getenv("DOC_RESULTS_DIR"))
 
 
-def run_prompt(prompt: dict, max_iterations: int = 20, max_budget_usd: float | None = 5.0) -> dict:
+def run_prompt(
+    prompt: dict,
+    max_iterations: int = 20,
+    max_budget_usd: float | None = 5.0,
+    prompt_config: PromptConfig | None = None,
+) -> dict:
     """Run a single prompt against a document collection and return results."""
     collection = COLLECTIONS[prompt["collection"]]
     missing = [p for p in collection if not Path(p).exists()]
@@ -84,6 +91,7 @@ def run_prompt(prompt: dict, max_iterations: int = 20, max_budget_usd: float | N
         model="openai/gpt-5.3-codex",
         sub_model="openai/gpt-4.1-mini",
         provider=provider,
+        prompts=prompt_config,
         max_iterations=max_iterations,
         max_budget_usd=max_budget_usd,
         tracing=True,
@@ -118,6 +126,7 @@ def run_prompt(prompt: dict, max_iterations: int = 20, max_budget_usd: float | N
         "collection": prompt["collection"],
         "document_paths": collection,
         "question": prompt["question"],
+        "prompt_config": prompt_config.to_dict() if prompt_config else None,
         "answer_text": answer.text,
         "answer_data": answer.data,
         "iterations": answer.iterations,
@@ -168,7 +177,19 @@ def main():
         default=None,
         help="Output directory for results (default: data/demo_document_results)",
     )
+    parser.add_argument(
+        "--prompts-yaml",
+        type=str,
+        default=None,
+        help="Path to a PromptConfig YAML file (overrides strategy/critic prompts)",
+    )
     args = parser.parse_args()
+
+    prompt_config = None
+    if args.prompts_yaml:
+        prompt_config = PromptConfig.from_yaml(args.prompts_yaml)
+        print(f"Loaded PromptConfig from {args.prompts_yaml}")
+        print(f"  Overrides: {list(prompt_config.to_dict().keys())}")
 
     results_dir = Path(args.output_dir) if args.output_dir else RESULTS_DIR
     results_dir.mkdir(parents=True, exist_ok=True)
@@ -187,6 +208,7 @@ def main():
                 prompt,
                 max_iterations=args.max_iterations,
                 max_budget_usd=args.max_budget_usd,
+                prompt_config=prompt_config,
             )
             all_results.append(result)
 

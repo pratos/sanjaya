@@ -9,7 +9,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from sse_starlette.sse import EventSourceResponse
 
-from sanjaya_api.models import DocumentRunRequest, RunRequest, RunResponse
+from sanjaya_api.models import DocumentRunRequest, ImageRunRequest, RunRequest, RunResponse
 from sanjaya_api.services.orchestrator import OrchestratorService
 from sanjaya_api.sse import format_heartbeat, format_sse_event
 
@@ -38,6 +38,10 @@ _KIND_MAP: dict[str, str] = {
     "sanjaya.sub_llm_call.vision_end": "vision",
     "sanjaya.sub_llm_call.caption_frames_start": "vision_start",
     "sanjaya.sub_llm_call.caption_frames_end": "vision",
+    "sanjaya.sub_llm_call.image_vision_start": "vision_start",
+    "sanjaya.sub_llm_call.image_vision_end": "vision",
+    "sanjaya.sub_llm_call.image_compare_start": "vision_start",
+    "sanjaya.sub_llm_call.image_compare_end": "vision",
     "sanjaya.schema_generation_start": "schema_generation_start",
     "sanjaya.schema_generation_end": "schema_generation",
     "sanjaya.critic_evaluation": "critic_evaluation",
@@ -67,6 +71,17 @@ async def start_run(request: RunRequest) -> RunResponse:
         subtitle_path=request.subtitle_path,
         subtitle_mode=request.subtitle_mode,
         subtitle_api_model=request.subtitle_api_model,
+        max_iterations=request.max_iterations,
+    )
+    return RunResponse(run_id=run_id)
+
+
+@router.post("/runs/image", response_model=RunResponse)
+async def start_image_run(request: ImageRunRequest) -> RunResponse:
+    """Start a new image analysis run."""
+    run_id = _orchestrator.start_image_run(
+        image_paths=request.image_paths,
+        question=request.question,
         max_iterations=request.max_iterations,
     )
     return RunResponse(run_id=run_id)

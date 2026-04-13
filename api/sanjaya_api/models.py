@@ -26,6 +26,14 @@ class DocumentRunRequest(BaseModel):
     max_iterations: int = 12
 
 
+class ImageRunRequest(BaseModel):
+    """Payload to start an image analysis run."""
+
+    image_paths: list[str]
+    question: str
+    max_iterations: int = 10
+
+
 class RunResponse(BaseModel):
     """Response after starting a run."""
 

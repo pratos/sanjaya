@@ -189,8 +189,9 @@ def make_caption_frames_fn(
             # Record moondream cost directly into the budget
             budget = get_budget() if get_budget else None
             if budget is not None:
-                # $0.30/1M input, $2.50/1M output
-                cost = (in_delta * 0.30 + out_delta * 2.50) / 1_000_000
+                from ...llm.pricing import moondream_cost
+
+                cost = moondream_cost(in_delta, out_delta)
                 budget.record(
                     input_tokens=in_delta,
                     output_tokens=out_delta,
