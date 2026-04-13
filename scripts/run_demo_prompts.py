@@ -193,9 +193,10 @@ def run_prompt(
 
     provider = OpenRouterProvider(api_key=os.getenv("OPENROUTER_API_KEY"))
     agent = Agent(
-        model="openai/gpt-5.3-codex",
+        model="z-ai/glm-5.1",
         sub_model="openai/gpt-4.1-mini",
-        caption_model="moondream:moondream3-preview",
+        vision_model="moondream-station:moondream3-preview",
+        caption_model="moondream-station:moondream3-preview",
         provider=provider,
         prompts=prompt_config,
         max_iterations=max_iterations,

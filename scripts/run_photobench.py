@@ -297,7 +297,7 @@ def main():
 
     provider = OpenRouterProvider(api_key=os.getenv("OPENROUTER_API_KEY"))
     agent_kwargs = {
-        "model": "openrouter:openai/gpt-5.3-codex",
+        "model": "openrouter:z-ai/glm-5.1",
         "sub_model": "openai/gpt-4.1-mini",
         "critic_model": critic_model,
         "provider": provider,

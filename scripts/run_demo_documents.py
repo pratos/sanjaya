@@ -88,7 +88,7 @@ def run_prompt(
 
     provider = OpenRouterProvider(api_key=os.getenv("OPENROUTER_API_KEY"))
     agent = Agent(
-        model="openai/gpt-5.3-codex",
+        model="z-ai/glm-5.1",
         sub_model="openai/gpt-4.1-mini",
         provider=provider,
         prompts=prompt_config,

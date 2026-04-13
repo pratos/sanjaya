@@ -300,7 +300,7 @@ def main():
     for i, sample in enumerate(samples):
         # Create a fresh agent per sample to reset budget
         agent = Agent(
-            model="openrouter:openai/gpt-5.3-codex",
+            model="openrouter:z-ai/glm-5.1",
             sub_model="openai/gpt-4.1-mini",
             critic_model=critic_model,
             provider=provider,

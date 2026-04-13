@@ -97,7 +97,7 @@ def main():
 
     # Create RLM instance
     rlm = RLM_REPL(
-        model="openrouter:openai/gpt-5.3-codex",
+        model="openrouter:z-ai/glm-5.1",
         recursive_model="openrouter:openai/gpt-4.1-mini",
         enable_logging=True,
         max_iterations=args.max_iterations,
