@@ -34,13 +34,19 @@ PROMPTS: list[dict] = [
         "id": 1,
         "name": "describe_single",
         "images": [str(DEMO_DIR / "sample.jpg")],
-        "question": "Describe everything visible in this image in detail.",
+        "question": (
+            "Give a grounded visual report of this image: key entities, actions, setting, "
+            "readable text, and notable details. Separate direct observations from inference."
+        ),
     },
     {
         "id": 2,
         "name": "text_extraction",
         "images": [str(DEMO_DIR / "screenshot.png")],
-        "question": "Read all text visible in this screenshot and list it.",
+        "question": (
+            "Extract all visible text exactly as shown. Preserve reading order "
+            "(top-to-bottom, left-to-right) and mark uncertain text as [unclear]."
+        ),
     },
     {
         "id": 3,
@@ -49,17 +55,52 @@ PROMPTS: list[dict] = [
             str(DEMO_DIR / "chart_q1.png"),
             str(DEMO_DIR / "chart_q2.png"),
         ],
-        "question": "Compare these two charts and summarize the key differences.",
+        "question": (
+            "Compare these two charts like an analyst: major metric differences, trend shifts, "
+            "axis/scale changes, and the most important takeaway from Q1 to Q2."
+        ),
     },
     {
         "id": 4,
         "name": "crop_and_zoom",
         "images": [str(DEMO_DIR / "document.jpg")],
-        "question": "What does the small label in the bottom-right corner say?",
+        "question": (
+            "Find the small label in the bottom-right corner, read its text verbatim, "
+            "and briefly describe its location and nearby context."
+        ),
     },
 ]
 
 RESULTS_DIR = Path(__file__).resolve().parent.parent / "data" / "demo_image_results"
+
+PRIMARY_IMAGE_MODEL = "google/gemini-3.1-flash-image-preview"
+
+DEFAULT_IMAGE_ANSWER_SCHEMA = {
+    "answer": {
+        "type": "string",
+        "description": "Direct answer to the user's image question",
+        "required": True,
+    },
+    "reasoning": {
+        "type": "string",
+        "description": "Concise explanation grounded in visible evidence",
+        "required": True,
+    },
+    "visual_evidence": {
+        "type": "list[str]",
+        "description": "Concrete observations from the image(s): objects, text, layout, or differences",
+        "required": True,
+    },
+}
+
+
+def _with_reasoning_schema(prompt_config: PromptConfig | None) -> PromptConfig:
+    """Ensure image runs produce a structured answer with reasoning."""
+    if prompt_config is None:
+        return PromptConfig(answer_schema=DEFAULT_IMAGE_ANSWER_SCHEMA)
+    if prompt_config.answer_schema is None:
+        return prompt_config.with_overrides(answer_schema=DEFAULT_IMAGE_ANSWER_SCHEMA)
+    return prompt_config
 
 
 def run_prompt(
@@ -76,11 +117,14 @@ def run_prompt(
         raise FileNotFoundError(f"Missing images: {missing}")
 
     provider = OpenRouterProvider(api_key=os.getenv("OPENROUTER_API_KEY"))
+    effective_prompt_config = _with_reasoning_schema(prompt_config)
     agent = Agent(
-        model="z-ai/glm-5.1",
+        model=PRIMARY_IMAGE_MODEL,
         sub_model="openai/gpt-4.1-mini",
+        vision_model=PRIMARY_IMAGE_MODEL,
+        caption_model=None,
         provider=provider,
-        prompts=prompt_config,
+        prompts=effective_prompt_config,
         max_iterations=max_iterations,
         max_budget_usd=max_budget_usd,
         tracing=True,
@@ -104,7 +148,7 @@ def run_prompt(
         "name": name,
         "image_paths": images,
         "question": question,
-        "prompt_config": prompt_config.to_dict() if prompt_config else None,
+        "prompt_config": effective_prompt_config.to_dict() if effective_prompt_config else None,
         "answer_text": answer.text,
         "answer_data": answer.data,
         "iterations": answer.iterations,

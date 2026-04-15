@@ -202,14 +202,15 @@ class LLMClient:
         Each query dict has keys: prompt, frame_paths, clip_paths.
         """
         if self._moondream is not None:
-            return [
-                self.vision_completion(
-                    prompt=q["prompt"],
-                    frame_paths=q.get("frame_paths"),
-                    clip_paths=q.get("clip_paths"),
-                )
-                for q in queries
-            ]
+            # Build batch items and send all queries in a single HTTP request
+            batch_items = []
+            for q in queries:
+                resolved = self._resolve_frame_paths(q.get("frame_paths"), q.get("clip_paths"))
+                batch_items.append({
+                    "frame_paths": resolved,
+                    "question": q["prompt"],
+                })
+            return self._moondream.query_batch(batch_items)
 
         return self._run_batched([
             {

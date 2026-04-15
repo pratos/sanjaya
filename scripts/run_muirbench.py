@@ -34,6 +34,8 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=True)
 BENCH_DIR = Path(__file__).resolve().parent.parent / "data" / "benchmarks" / "muirbench"
 RESULTS_DIR = Path(__file__).resolve().parent.parent / "data" / "benchmark_results" / "muirbench"
 
+PRIMARY_IMAGE_MODEL = "openrouter:google/gemini-3.1-flash-image-preview"
+
 
 # ── MUIRBench answer parsing (from their postprocess.py) ─────
 
@@ -89,16 +91,27 @@ def parse_mcq_response(response: str, all_choices: list[str], index2ans: dict[st
 
 
 def build_mcq_prompt(question: str, options: list[str]) -> str:
-    """Build MCQ prompt text from question and options."""
-    parts = [f"Question: {question}", "Choices:"]
+    """Build a stronger MCQ prompt for multi-image reasoning."""
+    parts = [
+        "Solve this multiple-choice visual reasoning question.",
+        f"Question: {question}",
+        "",
+        "Choices:",
+    ]
     for i, opt in enumerate(options):
         label = chr(ord("A") + i)
         if opt == "<image>":
             parts.append(f"({label}) [See image {i + 1}]")
         else:
             parts.append(f"({label}) {opt}")
-    parts.append("Hint: Please provide the correct option letter, such as A, B, C, D, directly.")
-    parts.append("Answer:")
+
+    parts.extend([
+        "",
+        "Requirements:",
+        "- Ground your decision in visible evidence from the provided image(s).",
+        "- Eliminate incorrect options explicitly before selecting the final option.",
+        "- Return one final choice letter plus a concise rationale.",
+    ])
     return "\n".join(parts)
 
 
@@ -135,9 +148,14 @@ def run_sample(
         answer = agent.ask(prompt, image=image_arg)
         elapsed = time.time() - start
 
-        # Parse predicted choice
+        # Parse predicted choice (prefer structured answer_schema output)
         raw_answer = answer.text or ""
-        predicted = parse_mcq_response(raw_answer, all_choices, index2ans)
+        answer_data = answer.data if isinstance(answer.data, dict) else {}
+        answer_letter = str(answer_data.get("answer_letter", "")).strip().upper()
+        if answer_letter in all_choices:
+            predicted = answer_letter
+        else:
+            predicted = parse_mcq_response(raw_answer, all_choices, index2ans)
         correct = predicted == answer_gt
 
         result = {
@@ -149,6 +167,7 @@ def run_sample(
             "predicted": predicted,
             "correct": correct,
             "raw_answer": raw_answer[:500],
+            "reasoning": str(answer_data.get("reasoning", ""))[:500],
             "iterations": answer.iterations,
             "cost_usd": answer.cost_usd,
             "input_tokens": answer.input_tokens,
@@ -286,6 +305,9 @@ def main():
         "remaining_samples": len(samples),
         "max_iterations": max_iter,
         "max_budget_usd": max_budget,
+        "model": PRIMARY_IMAGE_MODEL,
+        "vision_model": PRIMARY_IMAGE_MODEL,
+        "caption_model": None,
         "fast_mode": args.fast,
         "tasks_filter": args.tasks,
         "limit": args.limit,
@@ -300,8 +322,10 @@ def main():
     for i, sample in enumerate(samples):
         # Create a fresh agent per sample to reset budget
         agent = Agent(
-            model="openrouter:z-ai/glm-5.1",
+            model=PRIMARY_IMAGE_MODEL,
             sub_model="openai/gpt-4.1-mini",
+            vision_model=PRIMARY_IMAGE_MODEL,
+            caption_model=None,
             critic_model=critic_model,
             provider=provider,
             prompts=PromptConfig(answer_schema=answer_schema),

@@ -108,8 +108,9 @@ def _process_dataset_dir(dataset_dir: Path) -> None:
 
     # Find albums
     album_dirs = sorted([d for d in dataset_dir.iterdir() if d.is_dir() and d.name.startswith("album")])
+    image_exts = {".jpg", ".jpeg", ".png", ".webp", ".heic"}
     for album_dir in album_dirs:
-        images = list(album_dir.rglob("*.jpg")) + list(album_dir.rglob("*.jpeg")) + list(album_dir.rglob("*.png"))
+        images = [p for p in album_dir.rglob("*") if p.suffix.lower() in image_exts]
         manifest["albums"].append({
             "name": album_dir.name,
             "path": str(album_dir),
@@ -136,7 +137,7 @@ def _process_dataset_dir(dataset_dir: Path) -> None:
     if samples_dir and samples_dir.exists():
         sample_albums = sorted([d for d in samples_dir.iterdir() if d.is_dir()])
         for sd in sample_albums:
-            images = list(sd.rglob("*.jpg")) + list(sd.rglob("*.jpeg")) + list(sd.rglob("*.png"))
+            images = [p for p in sd.rglob("*") if p.suffix.lower() in image_exts]
             print(f"    Samples '{sd.name}': {len(images)} images")
 
     # Save manifest

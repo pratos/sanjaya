@@ -35,13 +35,108 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=True)
 BENCH_DIR = Path(__file__).resolve().parent.parent / "data" / "benchmarks" / "photobench"
 RESULTS_DIR = Path(__file__).resolve().parent.parent / "data" / "benchmark_results" / "photobench"
 
+PRIMARY_IMAGE_MODEL = "openrouter:openai/gpt-5.3-codex"
+
+# ── PhotoBench Retrieval Prompt ─────────────────────────────────────────────
+# This prompt is specifically designed for photo album retrieval tasks.
+# Key principles:
+# - Use search_images() first to narrow candidates (don't query all 60+ images)
+# - Use vision_query_batched() to verify candidates efficiently
+# - Return FILENAMES not image IDs
+# - Precision over recall (don't guess)
+
+PHOTOBENCH_PROMPT_TEMPLATE = '''
+## Task: Photo Album Retrieval
+
+Find images matching the query. **Favor recall over precision** - include plausible matches.
+
+**Query:** "{query}"
+
+**Album:** {n_images} images loaded.
+
+---
+
+## Strategy
+
+### Step 1: List & Search
+```python
+images = list_images()
+print(images)
+candidates = search_images("{search_terms}")
+print(candidates)
+```
+
+### Step 2: Batch Verify (use vision_query_batched for speed)
+```python
+# Verify candidates - be INCLUSIVE, not overly strict
+results = vision_query_batched([
+    {{"prompt": "Could this plausibly match '{query}'? YES if reasonably close, NO only if clearly unrelated.", "image_id": cid}}
+    for cid in candidate_ids[:15]
+])
+print(results)
+```
+
+### Step 3: Get filenames and return
+```python
+# Get actual filenames from get_image_info()
+for img_id in matches:
+    info = get_image_info(img_id)
+    print(info)  # has 'filename' field
+done({{"predictions": [filenames...], "reasoning": "..."}})
+```
+
+---
+
+## IMPORTANT: Be Inclusive, Not Strict
+
+- "museum souvenirs" = photos OF items from museum visits (pottery, gifts, displays)
+- "Christmas tree made of cups" = any tree-shaped arrangement of cup-like objects
+- "roast chicken with yellow-green sauce" = chicken with any greenish sauce
+- "selfie documenting X" = any selfie that could document X
+
+**When uncertain, INCLUDE the image.** Users prefer false positives over missed matches.
+
+## Location/Date Queries
+
+For queries mentioning specific places or dates:
+- Check for visible text (signs, labels, timestamps)
+- Check filenames for location hints (e.g., IMG_1179 near IMG_1178 = same location)
+- If query mentions a place and image COULD be there, include it
+
+## Rules
+
+1. Use `vision_query_batched` for 3+ images (faster)
+2. Return FILENAMES like `IMG_1234.JPG`, not image IDs
+3. **Include borderline matches** - recall matters more than precision
+4. For location queries without visible evidence, use filename proximity as hint
+
+## Output
+
+```python
+done({{
+    "predictions": ["IMG_1234.JPG", "IMG_5678.JPG"],
+    "reasoning": "Brief explanation"
+}})
+```
+'''
+
+
+def _build_photobench_prompt(query_text: str, n_images: int) -> str:
+    """Build the PhotoBench prompt with query-specific details."""
+    # Extract likely search terms from the query
+    search_terms = query_text.lower().replace(",", " ").replace(".", " ")
+    
+    return PHOTOBENCH_PROMPT_TEMPLATE.format(
+        query=query_text,
+        n_images=n_images,
+        search_terms=search_terms,
+    )
+
 
 def find_album_images(album_dir: Path, max_images: int | None = None) -> list[str]:
     """Find all image files in an album directory."""
     extensions = {".jpg", ".jpeg", ".png", ".webp", ".heic"}
-    images = sorted(
-        [str(p) for p in album_dir.rglob("*") if p.suffix.lower() in extensions]
-    )
+    images = sorted([str(p) for p in album_dir.rglob("*") if p.suffix.lower() in extensions])
     if max_images and len(images) > max_images:
         print(f"    Capping album from {len(images)} to {max_images} images")
         images = images[:max_images]
@@ -66,21 +161,7 @@ def run_query(
     ground_truth = query.get("ground_truth", query.get("gt", []))
 
     # Build the retrieval prompt
-    prompt = f"""You are searching through a photo album to find images matching this query:
-
-"{query_text}"
-
-You have {len(album_images)} images loaded. Use the available tools to:
-1. Start with list_images() to see all loaded images
-2. Use search_images(query) to search by caption keywords (this captions all images first)
-3. Use vision_query(prompt, image_id=...) to inspect promising candidates
-4. Use compare_images() if you need to compare candidates
-
-Return a JSON list of the image filenames (not full paths) that match the query,
-ranked by relevance (most relevant first). Return ONLY filenames, not image IDs.
-
-If no images match, return an empty list.
-"""
+    prompt = _build_photobench_prompt(query_text, len(album_images))
 
     print(f"\n[{query_idx + 1}/{total}] Query: {query_text[:100]}...")
     print(f"  Album: {len(album_images)} images")
@@ -95,9 +176,10 @@ If no images match, return an empty list.
         elapsed = time.time() - start
 
         raw_answer = answer.text or ""
+        answer_data = answer.data if isinstance(answer.data, dict) else {}
 
         # Try to parse predictions from the answer
-        predictions = _parse_predictions(raw_answer, answer.data)
+        predictions = _parse_predictions(raw_answer, answer_data)
 
         # Compute retrieval metrics if ground truth exists
         metrics = {}
@@ -111,6 +193,8 @@ If no images match, return an empty list.
             "ground_truth": ground_truth,
             "metrics": metrics,
             "raw_answer": raw_answer[:1000],
+            "reasoning": str(answer_data.get("reasoning", ""))[:800],
+            "evidence": answer_data.get("evidence", []) if isinstance(answer_data.get("evidence", []), list) else [],
             "iterations": answer.iterations,
             "cost_usd": answer.cost_usd,
             "input_tokens": answer.input_tokens,
@@ -119,10 +203,29 @@ If no images match, return an empty list.
             "n_album_images": len(album_images),
         }
 
-        recall = metrics.get("recall", "N/A")
-        precision = metrics.get("precision", "N/A")
-        print(f"  Predictions: {len(predictions)} | R={recall} | P={precision}")
-        print(f"  ${answer.cost_usd or 0:.4f} | {elapsed:.1f}s | {answer.iterations} iter")
+        recall = metrics.get("recall", 0)
+        precision = metrics.get("precision", 0)
+        f1 = metrics.get("f1", 0)
+        
+        # Status emoji based on recall
+        if recall >= 0.8:
+            status = "✅"
+        elif recall >= 0.5:
+            status = "🟡"
+        elif recall > 0:
+            status = "🟠"
+        else:
+            status = "❌"
+        
+        print(f"  {status} Predicted: {len(predictions)} | Expected: {len(ground_truth)}")
+        print(f"     Recall: {recall:.1%} | Precision: {precision:.1%} | F1: {f1:.2f}")
+        print(f"     Cost: ${answer.cost_usd or 0:.4f} | Time: {elapsed:.1f}s | Iters: {answer.iterations}")
+        
+        # Show predictions if few enough
+        if predictions and len(predictions) <= 5:
+            print(f"     Predicted: {predictions}")
+        if ground_truth and len(ground_truth) <= 5:
+            print(f"     Expected:  {ground_truth}")
 
     except Exception as e:
         elapsed = time.time() - start
@@ -158,7 +261,7 @@ def _parse_predictions(raw_answer: str, answer_data: dict | None) -> list[str]:
     import re
 
     # Look for JSON array in the response
-    json_match = re.search(r'\[.*?\]', raw_answer, re.DOTALL)
+    json_match = re.search(r"\[.*?\]", raw_answer, re.DOTALL)
     if json_match:
         try:
             parsed = json.loads(json_match.group())
@@ -168,7 +271,7 @@ def _parse_predictions(raw_answer: str, answer_data: dict | None) -> list[str]:
             pass
 
     # Look for filenames with image extensions
-    filenames = re.findall(r'[\w\-\.]+\.(?:jpg|jpeg|png|webp)', raw_answer, re.IGNORECASE)
+    filenames = re.findall(r"[\w\-\.]+\.(?:jpg|jpeg|png|webp)", raw_answer, re.IGNORECASE)
     return list(dict.fromkeys(filenames))  # deduplicate preserving order
 
 
@@ -213,6 +316,7 @@ def main():
     parser.add_argument("--max-album-images", type=int, default=100, help="Cap images per album (default: 100)")
     parser.add_argument("--split", choices=["train", "test"], default="test")
     parser.add_argument("--run-name", type=str, default=None)
+    parser.add_argument("--model-name", type=str, default="sanjaya-rlm", help="Model name for submission file")
     args = parser.parse_args()
 
     # Load manifest
@@ -267,15 +371,18 @@ def main():
         print("ERROR: No album images found. Check download.")
         sys.exit(1)
 
-    # Filter
+    # Filter by album (both albums AND queries)
     if args.album:
         albums = {k: v for k, v in albums.items() if k == args.album}
         if not albums:
             print(f"ERROR: Album '{args.album}' not found")
             sys.exit(1)
+        # Also filter queries to only those belonging to this album
+        queries = [q for q in queries if q.get("album") == args.album]
+        print(f"Filtered to {len(queries)} queries for album '{args.album}'")
 
     if args.limit:
-        queries = queries[:args.limit]
+        queries = queries[: args.limit]
 
     # Setup
     run_name = args.run_name or f"photobench_{time.strftime('%Y%m%d_%H%M%S')}"
@@ -283,11 +390,11 @@ def main():
     run_dir.mkdir(parents=True, exist_ok=True)
 
     if args.fast:
-        max_iter = args.max_iterations or 5
+        max_iter = args.max_iterations or 7  # Retrieval needs: list→search→batch_verify→refine→done
         max_budget = args.max_budget_usd or 2.00
         critic_model = None
     else:
-        max_iter = args.max_iterations or 8
+        max_iter = args.max_iterations or 10  # Full mode allows more verification passes
         max_budget = args.max_budget_usd or 5.00
         critic_model = "openrouter:qwen/qwen3-30b-a3b-thinking-2507"
 
@@ -297,13 +404,16 @@ def main():
 
     provider = OpenRouterProvider(api_key=os.getenv("OPENROUTER_API_KEY"))
     agent_kwargs = {
-        "model": "openrouter:z-ai/glm-5.1",
+        "model": PRIMARY_IMAGE_MODEL,
         "sub_model": "openai/gpt-4.1-mini",
+        "vision_model": "openai/gpt-4.1-mini",
+        "caption_model": None,
         "critic_model": critic_model,
         "provider": provider,
+        # "prompts": PromptConfig(answer_schema=PHOTOBENCH_ANSWER_SCHEMA),
         "max_iterations": max_iter,
         "max_budget_usd": max_budget,
-        "tracing": False,
+        "tracing": True,
     }
 
     # Save config
@@ -315,6 +425,13 @@ def main():
         "albums": {k: len(v) for k, v in albums.items()},
         "max_iterations": max_iter,
         "max_budget_usd": max_budget,
+        "model": agent_kwargs["model"],
+        "sub_model": agent_kwargs["sub_model"],
+        "vision_model": agent_kwargs["vision_model"],
+        "caption_model": agent_kwargs["caption_model"],
+        "critic_model": critic_model,
+        "tracing": agent_kwargs["tracing"],
+        "answer_schema": None,
         "max_album_images": args.max_album_images,
         "fast_mode": args.fast,
     }
@@ -378,12 +495,9 @@ def main():
 
     # Build submission file (for PhotoBench eval website)
     submission = {
-        "model_name": "sanjaya-rlm",
+        "model_name": args.model_name or "sanjaya-rlm",
         "language": "en",
-        "results": [
-            {"query_id": r["query_id"], "predictions": r["predictions"]}
-            for r in results
-        ],
+        "results": [{"query_id": r["query_id"], "predictions": r["predictions"]} for r in results],
     }
     (run_dir / "submission.json").write_text(json.dumps(submission, indent=2), encoding="utf-8")
 

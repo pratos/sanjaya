@@ -53,6 +53,11 @@ def _resolve_model(
     if isinstance(spec, Model):
         return spec
 
+    # Moondream specs are handled directly by LLMClient — don't resolve
+    from .llm.moondream import is_moondream_spec
+    if is_moondream_spec(spec):
+        return spec
+
     # Strip provider prefix for model name (e.g. "openrouter:openai/gpt-4.1-mini" → "openai/gpt-4.1-mini")
     model_name = spec.split(":", 1)[1] if ":" in spec else spec
 
@@ -83,7 +88,7 @@ class Agent:
 
     def __init__(
         self,
-        model: ModelSpec = "openrouter:z-ai/glm-5.1",
+        model: ModelSpec = "openrouter:google/gemini-3.1-flash-lite-preview",
         sub_model: ModelSpec = "openrouter:openai/gpt-4.1-mini",
         vision_model: ModelSpec | None = "moondream:moondream3-preview",
         caption_model: ModelSpec | None = "moondream:moondream3-preview",

@@ -1,9 +1,21 @@
 [project]
 name = "sanjaya"
-version = "0.2.0"
+version = "0.2.1"
 description = "Extensible RLM agent framework with video understanding"
 readme = "README.md"
+license = "MIT"
 requires-python = ">=3.12"
+authors = [
+    { name = "Prathamesh Sarang", email = "prthamesh.sarang@gmail.com" },
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "pydantic>=2.0",
     "pydantic-ai>=0.2.0",
@@ -17,16 +29,19 @@ dependencies = [
     "parakeet-mlx>=0.5.1",
     "fastapi>=0.135.3",
     "uvicorn>=0.43.0",
+    "huggingface-hub[cli]>=1.9.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/pratos/sanjaya"
+Repository = "https://github.com/pratos/sanjaya"
+Issues = "https://github.com/pratos/sanjaya/issues"
 
 [project.optional-dependencies]
 video = ["logfire", "Pillow>=10.0"]
 image = ["Pillow>=10.0", "pillow-heif>=0.16", "cairosvg>=2.7"]
 document = ["pymupdf>=1.24", "python-pptx>=1.0", "ebooklib>=0.18", "beautifulsoup4>=4.12"]
 tracing = ["logfire"]
-modal = [
-    "modal>=0.73",
-]
 all = ["sanjaya[video,tracing,document,image]"]
 benchmarks = [
     "datasets>=3.0",
@@ -66,4 +81,5 @@ pythonPlatform = "Linux"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["sanjaya*", "sanjaya_modal*"]
+include = ["sanjaya*"]
+exclude = ["sanjaya_modal*"]

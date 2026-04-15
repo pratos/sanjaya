@@ -15,44 +15,64 @@ from .workspace import ImageWorkspace
 _IMAGE_STRATEGY_PROMPT = """\
 ## Available Tools
 
-You are analyzing images. You decide the strategy.
+You are analyzing images. Work methodically: explore, verify, conclude.
 
-### Vision tools:
+### Vision tools (use these to SEE images)
 
-- **vision_query(prompt, image_id=, image_ids=)** — send image(s) to a vision model
-  with your question. Use for targeted visual analysis.
+- **vision_query(prompt, image_id=, image_ids=)** — ask a question about 1+ images.
+  Use for targeted checks: OCR, object detection, spatial relations, counts.
 
-- **compare_images(image_id_1, image_id_2, prompt=)** — compare two images side by
-  side in a single vision call. Good for spotting differences.
+- **vision_query_batched(queries)** — ask DIFFERENT questions about DIFFERENT images
+  in ONE fast request. **Always prefer this for 3+ images.**
+  ```python
+  vision_query_batched([
+      {"prompt": "What objects are visible?", "image_id": "img_0"},
+      {"prompt": "What objects are visible?", "image_id": "img_1"},
+      {"prompt": "What objects are visible?", "image_id": "img_2"},
+  ])
+  ```
 
-### Image tools:
+- **compare_images(image_id_1, image_id_2, prompt=)** — compare two images directly.
+  Use for differences, before/after, or similarity checks.
 
-- **list_images()** — see all loaded images with dimensions and format.
-- **get_image_info(image_id)** — detailed metadata for one image.
-- **crop_region(image_id, region_description)** — crop a described region for closer
-  inspection. Uses the vision model to locate the region, then crops it.
-- **search_images(query)** — search across image captions by keyword.
-  Lazily captions all images on first call.
+### Discovery tools
 
-### Text tools (builtins):
+- **list_images()** — see all loaded images with IDs and dimensions.
+- **search_images(query)** — keyword search over auto-generated captions.
+  Returns ranked matches. Use to narrow candidates before vision queries.
+- **get_image_info(image_id)** — metadata for one image.
+- **crop_region(image_id, region_description)** — zoom into a region for detail.
 
-- **llm_query(prompt)** — text-only reasoning over accumulated observations.
+### Synthesis tool
 
-### Strategy:
+- **llm_query(prompt)** — text-only reasoning over your observations.
 
-- Start with list_images() to see what you have.
-- Use vision_query() to ask about visual content.
-- Use crop_region() to zoom into specific areas for detail.
-- Use compare_images() for side-by-side analysis of two images.
-- Feed vision_query results to llm_query() for synthesis across images.
-- Always: print results, cite image IDs, ground claims in what you see.
+## Workflow (for many images)
 
-### One code block per response. Print everything.
+1. **list_images()** — understand what's available.
+2. **search_images(keywords)** — narrow to candidates (faster than querying all).
+3. **vision_query_batched([...])** — verify candidates visually in ONE call.
+4. **done(answer)** — return your answer with evidence.
+
+## Workflow (for few images, 1-3)
+
+1. **list_images()** — see the images.
+2. **vision_query(prompt)** — analyze directly.
+3. **done(answer)** — return answer.
+
+## Rules
+
+- ALWAYS use vision tools before concluding. Never guess from filenames alone.
+- Use **vision_query_batched** when checking 3+ images — it's 5x faster.
+- Cite `image_id` for every claim.
+- Quote text verbatim when readable; say "unclear" if not.
+- One code block per response. Print results.
 """
 
 _CAPTION_PROMPT = (
-    "Describe this image in detail. Include: objects, people, text, "
-    "colors, layout, setting, and any notable visual elements."
+    "Create a dense retrieval caption for this image. Include key subjects, actions, "
+    "setting, visible text/OCR, spatial layout, dominant colors, and distinctive details. "
+    "If text is unreadable, explicitly say text is unclear."
 )
 
 
@@ -152,6 +172,7 @@ class ImageToolkit(Toolkit):
             self._make_list_images_tool(),
             self._make_get_image_info_tool(),
             self._make_vision_query_tool(),
+            self._make_vision_query_batched_tool(),
             self._make_crop_region_tool(),
             self._make_search_images_tool(),
             self._make_compare_images_tool(),
@@ -252,15 +273,20 @@ class ImageToolkit(Toolkit):
         toolkit = self
 
         def _get_image_info(image_id: str) -> dict:
-            """Get detailed metadata for a single image."""
+            """Get detailed metadata for a single image, including EXIF if available."""
             info = toolkit._images.get(image_id)
             if info is None:
                 return {
                     "error": f"Unknown image_id: {image_id}. "
                     "Use list_images() to see available images."
                 }
-            return {
+            
+            from pathlib import Path
+            filename = Path(info.path).name
+            
+            result = {
                 "image_id": info.image_id,
+                "filename": filename,
                 "path": info.path,
                 "width": info.width,
                 "height": info.height,
@@ -268,12 +294,57 @@ class ImageToolkit(Toolkit):
                 "mode": info.mode,
                 "file_size_kb": round(info.file_size_bytes / 1024, 1),
             }
+            
+            # Try to extract EXIF data (date, GPS, camera)
+            try:
+                from PIL import Image
+                from PIL.ExifTags import TAGS, GPSTAGS
+                
+                with Image.open(info.path) as img:
+                    exif_data = img._getexif()
+                    if exif_data:
+                        exif_info = {}
+                        for tag_id, value in exif_data.items():
+                            tag = TAGS.get(tag_id, tag_id)
+                            if tag == "DateTimeOriginal":
+                                exif_info["date_taken"] = str(value)
+                            elif tag == "DateTime":
+                                exif_info["date_modified"] = str(value)
+                            elif tag == "Make":
+                                exif_info["camera_make"] = str(value)
+                            elif tag == "Model":
+                                exif_info["camera_model"] = str(value)
+                            elif tag == "GPSInfo":
+                                # Parse GPS coordinates
+                                gps = {}
+                                for gps_tag_id, gps_value in value.items():
+                                    gps_tag = GPSTAGS.get(gps_tag_id, gps_tag_id)
+                                    gps[gps_tag] = gps_value
+                                if "GPSLatitude" in gps and "GPSLongitude" in gps:
+                                    def to_decimal(coords, ref):
+                                        d, m, s = coords
+                                        decimal = float(d) + float(m)/60 + float(s)/3600
+                                        if ref in ['S', 'W']:
+                                            decimal = -decimal
+                                        return round(decimal, 6)
+                                    try:
+                                        lat = to_decimal(gps["GPSLatitude"], gps.get("GPSLatitudeRef", "N"))
+                                        lon = to_decimal(gps["GPSLongitude"], gps.get("GPSLongitudeRef", "E"))
+                                        exif_info["gps_coordinates"] = {"lat": lat, "lon": lon}
+                                    except Exception:
+                                        pass
+                        if exif_info:
+                            result["exif"] = exif_info
+            except Exception:
+                pass  # EXIF extraction failed, continue without it
+            
+            return result
 
         return Tool(
             name="get_image_info",
             description=(
-                "Get detailed metadata for an image: path, dimensions, format, "
-                "color mode, and file size."
+                "Get detailed metadata for an image: filename, path, dimensions, format, "
+                "and EXIF data (date taken, GPS coordinates, camera) if available."
             ),
             fn=_get_image_info,
             parameters={
@@ -401,6 +472,103 @@ class ImageToolkit(Toolkit):
                 ),
             },
             return_type="str",
+        )
+
+    def _make_vision_query_batched_tool(self) -> Tool:
+        toolkit = self
+
+        def _vision_query_batched(queries: list[dict]) -> list[str]:
+            """Run multiple vision queries in a single batched request.
+
+            Much faster than sequential vision_query() calls when you need
+            to ask different questions about different images.
+
+            Args:
+                queries: List of dicts, each with:
+                    - prompt (str): Question to ask
+                    - image_id (str, optional): Single image ID
+                    - image_ids (list[str], optional): Multiple image IDs
+            """
+            if toolkit._llm_client is None:
+                raise RuntimeError("Vision model not configured.")
+
+            batch: list[dict] = []
+
+            for q in queries:
+                prompt = q.get("prompt", "Describe this image.")
+                image_id = q.get("image_id")
+                image_ids = q.get("image_ids")
+
+                # Resolve which images to send for this query
+                ids_to_send: list[str] = []
+                if image_ids:
+                    ids_to_send = list(image_ids)
+                elif image_id:
+                    ids_to_send = [image_id]
+                elif len(toolkit._images) == 1:
+                    ids_to_send = list(toolkit._images.keys())
+
+                # Collect paths
+                frame_paths: list[str] = []
+                for iid in ids_to_send:
+                    info = toolkit._images.get(iid)
+                    if info is not None:
+                        frame_paths.append(info.path)
+                        toolkit._queried_images.add(iid)
+
+                # Cap images per query
+                if len(frame_paths) > toolkit.max_vision_images:
+                    frame_paths = frame_paths[:toolkit.max_vision_images]
+
+                batch.append({
+                    "prompt": prompt,
+                    "frame_paths": frame_paths if frame_paths else None,
+                    "clip_paths": None,
+                })
+
+            tracer = toolkit._tracer
+            vision_model = getattr(toolkit._llm_client, "vision_model", "unknown")
+            model_label = (
+                vision_model
+                if isinstance(vision_model, str)
+                else getattr(vision_model, "model_name", "unknown")
+            )
+
+            if tracer:
+                with tracer._span(
+                    "sanjaya.sub_llm_call.image_vision_batched",
+                    model=model_label,
+                    n_queries=len(batch),
+                    batched=True,
+                ) as ctx:
+                    results = toolkit._llm_client.vision_completion_batched(batch)
+                    ctx.record(n_results=len(results))
+                    _record_vision_budget(toolkit._llm_client, toolkit._budget)
+                    return results
+            else:
+                results = toolkit._llm_client.vision_completion_batched(batch)
+                _record_vision_budget(toolkit._llm_client, toolkit._budget)
+                return results
+
+        return Tool(
+            name="vision_query_batched",
+            description=(
+                "Run multiple vision queries in a single batched request. "
+                "Much faster than sequential vision_query() calls. "
+                "Pass a list of {prompt, image_id} dicts."
+            ),
+            fn=_vision_query_batched,
+            parameters={
+                "queries": ToolParam(
+                    name="queries",
+                    type_hint="list[dict]",
+                    description=(
+                        "List of query dicts, each with: "
+                        "prompt (str), image_id (str, optional), image_ids (list[str], optional)."
+                    ),
+                ),
+            },
+            return_type="list[str]",
         )
 
     # ── Rich tools (crop, search, compare) ──────────────────
@@ -659,7 +827,9 @@ class ImageToolkit(Toolkit):
                 )
 
             effective_prompt = prompt or (
-                "Compare these two images. Describe their similarities and differences."
+                "Compare these two images carefully. Report: "
+                "(1) shared elements, (2) key differences, "
+                "(3) any text differences, and (4) what changed overall."
             )
 
             toolkit._queried_images.add(image_id_1)

@@ -32,9 +32,10 @@ TOKENS_PER_IMAGE = 729
 # ── Global concurrency limiter ──────────────────────────────
 # Caps total in-flight HTTP requests to Moondream across *all*
 # MoondreamVisionClient instances in this process.  Cloud rate-limits
-# more aggressively than a local Station, so the default is
-# conservative.  Override via MOONDREAM_MAX_CONCURRENT env var.
-_MAX_CONCURRENT = int(os.environ.get("MOONDREAM_MAX_CONCURRENT", "2"))
+# aggressively (default 2); local Station / Modal proxy run Photon
+# with auto-batching so higher concurrency is beneficial (default 8).
+_MAX_CONCURRENT = int(os.environ.get("MOONDREAM_MAX_CONCURRENT",
+                                      "8" if os.environ.get("MOONDREAM_BASE_URL") else "2"))
 _global_semaphore = threading.BoundedSemaphore(_MAX_CONCURRENT)
 logger.debug("Moondream global concurrency limit: %d", _MAX_CONCURRENT)
 
@@ -86,8 +87,9 @@ class MoondreamVisionClient:
             )
 
         self._model = model
-        # Local station can handle more concurrency; cloud rate-limits aggressively
-        self._max_workers = max_workers if max_workers is not None else (4 if self._is_local else 2)
+        # Local station and proxy (Modal) run Photon with auto-batching;
+        # cloud rate-limits aggressively so keep concurrency low there.
+        self._max_workers = max_workers if max_workers is not None else (8 if (self._is_local or self._is_proxy) else 2)
         self._model_name = f"moondream/{model}"
 
         # Cumulative usage tracking
@@ -199,10 +201,21 @@ class MoondreamVisionClient:
         *,
         length: str = "normal",
     ) -> list[str]:
-        """Caption multiple frames concurrently via the /caption endpoint."""
+        """Caption multiple frames via a single batched /batch/caption request.
+
+        Falls back to concurrent individual requests if the batch endpoint
+        is not available (e.g. vanilla Moondream Cloud).
+        """
         valid = [Path(p) for p in frame_paths if Path(p).exists()]
         if not valid:
             return []
+
+        # Try batch endpoint first (supported by sanjaya_modal proxy)
+        try:
+            return self._batch_caption(valid, length=length)
+        except (ValueError, OSError) as e:
+            # 404 / connection error → batch endpoint not available, fall back
+            logger.debug("Batch caption unavailable, falling back to individual requests: %s", e)
 
         def _caption_one(idx: int, path: Path) -> tuple[int, str]:
             return idx, self.caption_frame(str(path), length=length)
@@ -224,6 +237,25 @@ class MoondreamVisionClient:
                     logger.warning("Moondream caption failed for frame %d: %s", idx, e)
 
         return [captions[i] for i in range(len(valid))]
+
+    def _batch_caption(
+        self,
+        paths: list[Path],
+        *,
+        length: str = "normal",
+    ) -> list[str]:
+        """Send all frames in a single HTTP request to /batch/caption."""
+        images = []
+        for p in paths:
+            b64 = self._load_and_encode(p)
+            images.append({"image_url": f"data:image/jpeg;base64,{b64}"})
+
+        data = self._make_request("batch/caption", {
+            "images": images,
+            "length": length,
+            "model": self._model,
+        })
+        return data.get("captions", [])
 
     def _load_and_encode(self, path: Path) -> str:
         """Read an image file, validate it via PIL, and return base64-encoded JPEG.
@@ -258,8 +290,8 @@ class MoondreamVisionClient:
         """Query Moondream about multiple frames, aggregating results.
 
         Single frame: returns the direct answer.
-        Multiple frames: returns indexed per-frame answers for the
-        orchestrator to synthesize.
+        Multiple frames: tries batch endpoint first, falls back to
+        concurrent individual requests.
         """
         valid = [Path(p) for p in frame_paths if Path(p).exists()][:max_frames]
         if not valid:
@@ -271,7 +303,18 @@ class MoondreamVisionClient:
             self._track_usage(1, answer)
             return answer
 
-        # Fan out concurrent per-frame queries
+        # Try batch endpoint first (supported by sanjaya_modal proxy)
+        try:
+            answers_list = self._batch_query(valid, prompt)
+            parts = []
+            for i, answer in enumerate(answers_list):
+                frame_name = valid[i].stem
+                parts.append(f"[Frame {i} ({frame_name})]: {answer}")
+            return "\n".join(parts)
+        except (ValueError, OSError) as e:
+            logger.debug("Batch query unavailable, falling back to individual requests: %s", e)
+
+        # Fallback: fan out concurrent per-frame queries
         def _query_one(idx: int, path: Path) -> tuple[int, str]:
             b64 = self._load_and_encode(path)
             return idx, self._query_single(b64, prompt)
@@ -299,6 +342,84 @@ class MoondreamVisionClient:
             frame_name = valid[i].stem
             parts.append(f"[Frame {i} ({frame_name})]: {answers[i]}")
         return "\n".join(parts)
+
+    def _batch_query(
+        self,
+        paths: list[Path],
+        question: str,
+    ) -> list[str]:
+        """Send all frames + question in a single HTTP request to /batch/query."""
+        queries = []
+        for p in paths:
+            b64 = self._load_and_encode(p)
+            queries.append({
+                "image_url": f"data:image/jpeg;base64,{b64}",
+                "question": question,
+            })
+
+        data = self._make_request("batch/query", {
+            "queries": queries,
+            "model": self._model,
+        })
+        return data.get("answers", [])
+
+    def query_batch(
+        self,
+        items: list[dict[str, Any]],
+    ) -> list[str]:
+        """Batch multiple (frames, question) groups in a single HTTP request.
+
+        Each item: {"frame_paths": [str, ...], "question": str}.
+        Returns one aggregated answer string per item (same format as query_frames).
+        Falls back to sequential query_frames calls if batch endpoint unavailable.
+        """
+        # Flatten all (image, question) pairs, tracking group boundaries
+        flat_queries: list[dict[str, str]] = []
+        group_sizes: list[int] = []
+        for item in items:
+            paths = [Path(p) for p in item["frame_paths"] if Path(p).exists()]
+            group_sizes.append(len(paths))
+            for p in paths:
+                b64 = self._load_and_encode(p)
+                flat_queries.append({
+                    "image_url": f"data:image/jpeg;base64,{b64}",
+                    "question": item["question"],
+                })
+
+        if not flat_queries:
+            return ["No valid frames provided."] * len(items)
+
+        try:
+            data = self._make_request("batch/query", {
+                "queries": flat_queries,
+                "model": self._model,
+            })
+            flat_answers = data.get("answers", [])
+        except (ValueError, OSError) as e:
+            logger.debug("Batch query unavailable, falling back: %s", e)
+            return [
+                self.query_frames(item["question"], item["frame_paths"])
+                for item in items
+            ]
+
+        # Re-group flat answers back into per-item results
+        results: list[str] = []
+        offset = 0
+        for item, size in zip(items, group_sizes):
+            chunk = flat_answers[offset:offset + size]
+            offset += size
+            if len(chunk) == 0:
+                results.append("No valid frames provided.")
+            elif len(chunk) == 1:
+                results.append(chunk[0])
+            else:
+                paths = [Path(p) for p in item["frame_paths"] if Path(p).exists()]
+                parts = []
+                for i, answer in enumerate(chunk):
+                    name = paths[i].stem if i < len(paths) else f"frame_{i}"
+                    parts.append(f"[Frame {i} ({name})]: {answer}")
+                results.append("\n".join(parts))
+        return results
 
     def _track_usage(self, n_images: int, *responses: str) -> None:
         # Skip if _query_single already tracked via API metrics

@@ -69,7 +69,12 @@ if _MOONDREAM_KEY:
     min_containers=0,
     max_containers=1,
     scaledown_window=3600,
-    secrets=[modal.Secret.from_dict(_secrets_dict)],
+    secrets=[modal.Secret.from_dict({
+        **_secrets_dict,
+        # Photon auto-batches concurrent inference calls up to this limit.
+        # Default is 4; raise to match typical frame counts per clip.
+        "KESTREL_MAX_BATCH_SIZE": "8",
+    })],
 )
 @modal.asgi_app()
 def server():
@@ -139,6 +144,16 @@ def server():
             img = img.convert("RGB")
         return img
 
+    # ── Inference helpers (run in threads so Photon can auto-batch) ──
+
+    import asyncio
+
+    def _caption_sync(img: Image.Image, length: str) -> dict:
+        return model.caption(img, length=length)
+
+    def _query_sync(img: Image.Image, question: str) -> dict:
+        return model.query(img, question)
+
     # ── Routes ───────────────────────────────────────────────
 
     async def health(request):
@@ -153,12 +168,45 @@ def server():
                 {"error": "bad_image", "detail": str(e)}, status_code=400,
             )
         length = body.get("length", "normal")
-        result = model.caption(img, length=length)
+        result = await asyncio.to_thread(_caption_sync, img, length)
         text = result["caption"]
         out_tokens = max(1, int(len(text.split()) * 1.3))
         return JSONResponse({
             "caption": text,
             "metrics": {"input_tokens": TOKENS_PER_IMAGE, "output_tokens": out_tokens},
+        })
+
+    async def batch_caption(request):
+        body = await request.json()
+        images = body.get("images", [])
+        length = body.get("length", "normal")
+
+        # Decode all images first (CPU-bound, fast)
+        decoded: list[tuple[int, Image.Image | str]] = []
+        for i, item in enumerate(images):
+            try:
+                decoded.append((i, _decode(item["image_url"])))
+            except Exception as e:
+                decoded.append((i, f"[caption error: {e}]"))
+
+        # Run inference concurrently — Photon auto-batches at GPU level
+        async def _cap(idx: int, img_or_err):
+            if isinstance(img_or_err, str):
+                return idx, img_or_err, 0
+            result = await asyncio.to_thread(_caption_sync, img_or_err, length)
+            text = result["caption"]
+            out_tokens = max(1, int(len(text.split()) * 1.3))
+            return idx, text, out_tokens
+
+        results = await asyncio.gather(*[_cap(i, v) for i, v in decoded])
+        results_sorted = sorted(results, key=lambda r: r[0])
+
+        captions = [text for _, text, _ in results_sorted]
+        total_in = sum(TOKENS_PER_IMAGE for _, v in decoded if not isinstance(v, str))
+        total_out = sum(ot for _, _, ot in results_sorted)
+        return JSONResponse({
+            "captions": captions,
+            "metrics": {"input_tokens": total_in, "output_tokens": total_out},
         })
 
     async def query(request):
@@ -169,7 +217,7 @@ def server():
             return JSONResponse(
                 {"error": "bad_image", "detail": str(e)}, status_code=400,
             )
-        result = model.query(img, body["question"])
+        result = await asyncio.to_thread(_query_sync, img, body["question"])
         text = result["answer"]
         out_tokens = max(1, int(len(text.split()) * 1.3))
         return JSONResponse({
@@ -177,11 +225,45 @@ def server():
             "metrics": {"input_tokens": TOKENS_PER_IMAGE, "output_tokens": out_tokens},
         })
 
+    async def batch_query(request):
+        body = await request.json()
+        queries = body.get("queries", [])
+
+        # Decode all images first
+        decoded: list[tuple[int, Image.Image | str, str]] = []
+        for i, item in enumerate(queries):
+            try:
+                decoded.append((i, _decode(item["image_url"]), item["question"]))
+            except Exception as e:
+                decoded.append((i, f"[query error: {e}]", ""))
+
+        # Run inference concurrently — Photon auto-batches at GPU level
+        async def _qry(idx: int, img_or_err, question: str):
+            if isinstance(img_or_err, str):
+                return idx, img_or_err, 0
+            result = await asyncio.to_thread(_query_sync, img_or_err, question)
+            text = result["answer"]
+            out_tokens = max(1, int(len(text.split()) * 1.3))
+            return idx, text, out_tokens
+
+        results = await asyncio.gather(*[_qry(i, v, q) for i, v, q in decoded])
+        results_sorted = sorted(results, key=lambda r: r[0])
+
+        answers = [text for _, text, _ in results_sorted]
+        total_in = sum(TOKENS_PER_IMAGE for _, v, _ in decoded if not isinstance(v, str))
+        total_out = sum(ot for _, _, ot in results_sorted)
+        return JSONResponse({
+            "answers": answers,
+            "metrics": {"input_tokens": total_in, "output_tokens": total_out},
+        })
+
     return Starlette(
         routes=[
             Route("/v1/health", health, methods=["GET"]),
             Route("/v1/caption", caption, methods=["POST"]),
+            Route("/v1/batch/caption", batch_caption, methods=["POST"]),
             Route("/v1/query", query, methods=["POST"]),
+            Route("/v1/batch/query", batch_query, methods=["POST"]),
         ],
         middleware=[Middleware(BearerAuthMiddleware)],
     )

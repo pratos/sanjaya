@@ -18,6 +18,7 @@ import os
 import time
 from pathlib import Path
 
+from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 from sanjaya import Agent
@@ -172,7 +173,7 @@ PROMPTS: list[dict] = [
 
 # ── Runner ───────────────────────────────────────────────────
 
-RESULTS_DIR = Path(__file__).resolve().parent.parent / "data" / "demo_results_v6"
+RESULTS_DIR = Path(__file__).resolve().parent.parent / "data" / "demo_results_v8"
 
 
 def _check_subtitle_exists(video_path: str) -> bool:
@@ -195,13 +196,27 @@ def run_prompt(
     """Run a single prompt with depth-2 recursion and moondream vision."""
     video_cfg = VIDEOS[prompt["video_key"]]
 
-    provider = OpenRouterProvider(api_key=os.getenv("OPENROUTER_API_KEY"))
+    # Root model: GLM-5.1 on Modal's free endpoint (Chat Completions API)
+    from pydantic_ai.models.openai import OpenAIChatModel
+    from sanjaya.llm.client import LLMClient
+
+    glm_provider = OpenAIProvider(
+        base_url="https://api.us-west-2.modal.direct/v1/",
+        api_key=os.getenv("MODAL_RESEARCH_TOKEN", ""),
+    )
+    glm_model = OpenAIChatModel("zai-org/GLM-5.1-FP8", provider=glm_provider)
+
+    # Sub/critic models: OpenRouter
+    or_provider = OpenRouterProvider(api_key=os.getenv("OPENROUTER_API_KEY"))
+    or_sub = OpenAIChatModel("openai/gpt-4.1-mini", provider=or_provider)
+    or_critic = OpenAIChatModel("qwen/qwen3-30b-a3b-thinking-2507", provider=or_provider)
+
     agent = Agent(
-        model="z-ai/glm-5.1",
-        sub_model="openai/gpt-4.1-mini",
+        model=glm_model,
+        sub_model=or_sub,
         vision_model="moondream:moondream3-preview",
         caption_model="moondream:moondream3-preview",
-        provider=provider,
+        critic_model=or_critic,
         prompts=prompt_config,
         max_iterations=max_iterations,
         max_depth=2,
@@ -215,7 +230,7 @@ def run_prompt(
     print(f"\n{'=' * 60}")
     print(f"PROMPT {prompt['id']}: {prompt['name']}")
     print(f"Video: {prompt['video_key']}")
-    print("Config: max_depth=2, vision=moondream, budget=$1.00")
+    print("Config: root=GLM-5.1-FP8(Modal), sub=gpt-4.1-mini(OR), vision=moondream(Modal), budget=$1.00")
     print(f"Question: {prompt['question'][:80]}...")
     print(f"{'=' * 60}\n")
 

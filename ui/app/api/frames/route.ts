@@ -1,5 +1,5 @@
 import { readFile, stat } from "fs/promises";
-import { join, extname } from "path";
+import { extname, join } from "path";
 import { NextResponse, type NextRequest } from "next/server";
 
 const PROJECT_ROOT = join(process.cwd(), "..");
@@ -10,27 +10,61 @@ const MIME: Record<string, string> = {
   ".jpeg": "image/jpeg",
   ".png": "image/png",
   ".webp": "image/webp",
+  ".gif": "image/gif",
+  ".tiff": "image/tiff",
+  ".tif": "image/tiff",
+  ".bmp": "image/bmp",
+  ".heic": "image/heic",
+  ".heif": "image/heif",
+  ".svg": "image/svg+xml",
+  ".avif": "image/avif",
 };
 
-async function resolveFramePath(framePath: string): Promise<string | null> {
-  // Try data/ first (strips data/ prefix if present)
-  const cleaned = framePath.replace(/^data\//, "");
-  const dataPath = join(DATA_DIR, cleaned);
-  try {
-    await stat(dataPath);
-    return dataPath;
-  } catch {
-    // noop
-  }
+function normalizeInputPath(pathParam: string): string {
+  const stripped = pathParam.startsWith("file://")
+    ? pathParam.slice("file://".length)
+    : pathParam;
 
-  // Try project root (for sanjaya_artifacts/ paths)
-  const rootPath = join(PROJECT_ROOT, framePath);
   try {
-    await stat(rootPath);
-    return rootPath;
+    return decodeURIComponent(stripped);
+  } catch {
+    return stripped;
+  }
+}
+
+async function existingFile(path: string): Promise<string | null> {
+  try {
+    const fileStat = await stat(path);
+    return fileStat.isFile() ? path : null;
   } catch {
     return null;
   }
+}
+
+async function resolveFramePath(framePath: string): Promise<string | null> {
+  const normalized = normalizeInputPath(framePath);
+
+  // Absolute paths (used by image benchmark JSONs and uploads)
+  if (normalized.startsWith("/")) {
+    const absolute = await existingFile(normalized);
+    if (absolute) return absolute;
+  }
+
+  // Relative to data/
+  const cleaned = normalized.replace(/^data\//, "").replace(/^\/+/, "");
+
+  const candidates = [
+    join(DATA_DIR, cleaned),
+    // Relative to project root (e.g. sanjaya_artifacts/...)
+    join(PROJECT_ROOT, cleaned),
+  ];
+
+  for (const candidate of candidates) {
+    const match = await existingFile(candidate);
+    if (match) return match;
+  }
+
+  return null;
 }
 
 export async function GET(req: NextRequest) {
@@ -45,7 +79,11 @@ export async function GET(req: NextRequest) {
   }
 
   const ext = extname(fullPath).toLowerCase();
-  const contentType = MIME[ext] ?? "application/octet-stream";
+  const contentType = MIME[ext];
+  if (!contentType) {
+    return new NextResponse("Unsupported image type", { status: 415 });
+  }
+
   const buf = await readFile(fullPath);
 
   return new NextResponse(buf, {

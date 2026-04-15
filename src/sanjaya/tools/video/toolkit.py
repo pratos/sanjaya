@@ -27,13 +27,15 @@ You are analyzing a video. You decide the strategy.
 
 ### Vision tools (two modes — choose based on need):
 
-- **caption_frames(clip_id)** — cheap per-frame captioning via a focused vision model.
+- **caption_frames(clip_id)** — cheap batched per-frame captioning via a focused vision model.
+  All frames are sent in a single batch request for fast processing.
   Returns timestamped text like `["[12.5s] Presenter showing bar chart..."]`.
   Best for broad visual coverage. Feed the output to llm_query() for reasoning.
 
 - **vision_query(prompt, clip_id)** — sends all frames in a clip to a vision model
-  with your prompt. More expensive but lets you ask targeted questions about specific
-  visual details (e.g. "read the exact text on this chart", "what color is the button").
+  with your prompt via a single batched request. More expensive but lets you ask
+  targeted questions about specific visual details (e.g. "read the exact text on
+  this chart", "what color is the button").
 
 ### Text tools:
 
@@ -71,13 +73,14 @@ products, diagrams, charts, UI elements, code, or physical objects.
 
 ### Vision tools (two modes — choose based on need):
 
-- **caption_frames(clip_id)** — cheap per-frame captioning. Returns timestamped
-  descriptions. Best for scanning large portions of the video quickly.
+- **caption_frames(clip_id)** — cheap batched per-frame captioning. All frames sent
+  in a single batch request for fast processing. Returns timestamped descriptions.
+  Best for scanning large portions of the video quickly.
   Feed results to llm_query() for reasoning across many frames.
 
 - **vision_query(prompt, clip_id)** — targeted visual question. Sends frames
-  directly with your prompt. Use when you need to read specific text, verify
-  a detail, or ask about something the captions missed.
+  in a single batched request with your prompt. Use when you need to read
+  specific text, verify a detail, or ask about something the captions missed.
 
 ### Text tools:
 
@@ -588,10 +591,10 @@ class VideoToolkit(Toolkit):
         return Tool(
             name="caption_frames",
             description=(
-                "Caption each frame in a clip individually using a focused vision model. "
-                "Returns timestamped descriptions like '[12.5s] Presenter shows bar chart'. "
-                "Cheap and concurrent — use for broad visual coverage, then feed results "
-                "to llm_query() for reasoning. "
+                "Caption each frame in a clip using a focused vision model via a single "
+                "batched request. Returns timestamped descriptions like "
+                "'[12.5s] Presenter shows bar chart'. Cheap and fast — use for broad "
+                "visual coverage, then feed results to llm_query() for reasoning. "
                 "IMPORTANT: call sample_frames() on the clip first."
             ),
             fn=fn,
@@ -625,7 +628,7 @@ class VideoToolkit(Toolkit):
 
         return Tool(
             name="vision_query",
-            description="Query a vision model about video frames or a clip.",
+            description="Query a vision model about video frames or a clip via a single batched request.",
             fn=fn,
             parameters={
                 "prompt": ToolParam(name="prompt", type_hint="str | None", default=None, description="What to ask about the visual content."),
@@ -652,7 +655,7 @@ class VideoToolkit(Toolkit):
 
         return Tool(
             name="vision_query_batched",
-            description="Run multiple vision queries concurrently. Much faster than sequential vision_query() calls.",
+            description="Run multiple vision queries in a single batched request. Much faster than sequential vision_query() calls.",
             fn=fn,
             parameters={
                 "queries": ToolParam(name="queries", type_hint="list[dict]", description="List of dicts with keys matching vision_query params."),
