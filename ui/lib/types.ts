@@ -117,6 +117,7 @@ export interface BenchmarkPrompt {
   question: string;
   versions: Record<string, PromptResult>;
   bestVersion: string;
+  groundTruth?: string | null;
 }
 
 export interface LiveRunItem {
@@ -206,6 +207,20 @@ export interface DocumentBenchmarkData {
 
 /* ── Image benchmark types ────────────────────────────── */
 
+export interface MuirbenchChoice {
+  label: string;
+  text: string;
+  isImageRef: boolean;
+  imagePath: string | null;
+  imageTag: string | null;
+}
+
+export interface MuirbenchMeta {
+  idx: string;
+  answer: string | null;
+  choices: MuirbenchChoice[];
+}
+
 export interface ImageResult {
   promptId: number;
   promptName: string;
@@ -223,6 +238,7 @@ export interface ImageResult {
   evidenceSources: string[];
   error?: string;
   traceEvents?: TraceEvent[] | null;
+  muirbench?: MuirbenchMeta | null;
 }
 
 export interface ImagePrompt {
@@ -233,6 +249,12 @@ export interface ImagePrompt {
   bestVersion: string;
 }
 
+export interface BenchmarkAccuracy {
+  correct: number;
+  total: number;
+  accuracy: number;
+}
+
 export interface ImageBenchmarkData {
   prompts: ImagePrompt[];
   summary: {
@@ -241,5 +263,8 @@ export interface ImageBenchmarkData {
     totalCostUsd: number;
     totalWallTimeS: number;
     latestVersion: string;
+    models?: string[];
+    benchmarks?: string[];
+    benchmarkSummaries?: Record<string, BenchmarkAccuracy>;
   };
 }

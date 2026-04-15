@@ -99,6 +99,16 @@ export function PromptDetail({ prompt }: PromptDetailProps) {
           </p>
         </div>
 
+        {/* Ground truth baseline */}
+        {prompt.groundTruth && (
+          <div>
+            <span className="block text-[13px] font-bold uppercase tracking-[0.15em] text-hud-dim mb-1">
+              Ground Truth
+            </span>
+            <p className="text-xs text-hud-green leading-relaxed">{prompt.groundTruth}</p>
+          </div>
+        )}
+
         {/* Answer summary */}
         {active.answerText && (
           <div>

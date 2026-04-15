@@ -4,6 +4,11 @@ import { NextResponse } from "next/server";
 
 const DATA_DIR = join(process.cwd(), "..", "data");
 
+/** Ground truth baselines for prompts that have known answers. */
+const GROUND_TRUTH: Record<number, string> = {
+  2: "144 three-pointers",
+};
+
 /** Auto-discover demo_results* directories and assign version labels. */
 async function discoverVersionDirs(): Promise<Record<string, string>> {
   let entries: string[];
@@ -369,6 +374,7 @@ export async function GET() {
         question: best.question,
         versions,
         bestVersion,
+        groundTruth: GROUND_TRUTH[promptId] ?? null,
       };
     });
 
