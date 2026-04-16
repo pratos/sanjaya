@@ -8,6 +8,7 @@ from typing import Any
 from ...answer import Evidence
 from ...retrieval.sqlite_fts import SQLiteFTSBackend
 from ..base import Tool, Toolkit, ToolParam
+from ..video.workspace import ArtifactWorkspace
 from .parsers import DocumentChunk, parse_document
 
 _DOCUMENT_STRATEGY_PROMPT = """\
@@ -86,6 +87,7 @@ class DocumentToolkit(Toolkit):
         self._fts: SQLiteFTSBackend | None = None
         self._accessed_chunks: set[tuple[str, int]] = set()
         self._question: str | None = None
+        self._workspace: ArtifactWorkspace | None = None
 
         # Injected by Agent.use()
         self._llm_client: Any = None
@@ -99,6 +101,11 @@ class DocumentToolkit(Toolkit):
             return
 
         self._question = context.get("question")
+
+        run_context = context.get("context")
+        run_id = run_context.get("run_id") if isinstance(run_context, dict) else None
+        if isinstance(run_id, str) and run_id.startswith("live_run_docs"):
+            self._workspace = ArtifactWorkspace(run_id=run_id)
 
         if isinstance(doc_paths, str):
             doc_paths = [doc_paths]

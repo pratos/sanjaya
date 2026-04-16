@@ -12,29 +12,61 @@ type Row = Record<string, unknown>;
  * "02:13", "2:13.5", "132.5s" into seconds.
  * Returns the START time (before any dash) or null.
  */
+function normalizeTimestampText(value: string): string {
+  return value
+    .replace(/[‐‑‒–—―−]/g, "-")
+    .replace(/(\d),(\d)/g, "$1.$2")
+    .trim();
+}
+
 function parseTimestamp(value: string): number | null {
   if (typeof value !== "string") return null;
-  // Take only the start part if it's a range
-  const part = value.split(/[-–]/)[0].trim();
 
-  // HH:MM:SS or MM:SS or MM:SS.ms
-  const colonMatch = part.match(/^(\d{1,2}):(\d{2})(?::(\d{2}(?:\.\d+)?))?$/);
-  if (colonMatch) {
-    if (colonMatch[3] != null) {
-      // HH:MM:SS
-      return (
-        parseInt(colonMatch[1], 10) * 3600 +
-        parseInt(colonMatch[2], 10) * 60 +
-        parseFloat(colonMatch[3])
-      );
-    }
-    // MM:SS
-    return parseInt(colonMatch[1], 10) * 60 + parseFloat(colonMatch[2]);
+  // Take only the start part if it's a range.
+  const part = normalizeTimestampText(value).split(/\s*-\s*/)[0]?.trim() ?? "";
+
+  // HH:MM:SS(.ms)
+  const hmsMatch = part.match(/^(\d{1,2}):(\d{1,2}):(\d{1,2}(?:\.\d+)?)$/);
+  if (hmsMatch) {
+    return (
+      parseInt(hmsMatch[1], 10) * 3600 +
+      parseInt(hmsMatch[2], 10) * 60 +
+      parseFloat(hmsMatch[3])
+    );
   }
 
-  // Plain seconds like "132.5" or "132.5s"
-  const secMatch = part.match(/^(\d+(?:\.\d+)?)s?$/);
-  if (secMatch) return parseFloat(secMatch[1]);
+  // MM:SS(.ms)
+  const msMatch = part.match(/^(\d{1,3}):(\d{1,2}(?:\.\d+)?)$/);
+  if (msMatch) {
+    return parseInt(msMatch[1], 10) * 60 + parseFloat(msMatch[2]);
+  }
+
+  // Plain seconds like "132.5", "132.5s", "132sec".
+  // Avoid plain integers like "2026" to prevent false positives on years/IDs.
+  const secMatch = part.match(/^(\d+(?:\.\d+)?)(?:\s*(s|sec|secs|second|seconds))?$/i);
+  if (secMatch) {
+    const hasUnit = Boolean(secMatch[2]);
+    const hasDecimal = secMatch[1].includes(".");
+    if (hasUnit || hasDecimal) return parseFloat(secMatch[1]);
+  }
+
+  return null;
+}
+
+function extractSeekSeconds(value: string): number | null {
+  const normalized = normalizeTimestampText(value);
+
+  const direct = parseTimestamp(normalized);
+  if (direct != null) return direct;
+
+  const candidates = normalized.match(
+    /\d{1,3}:\d{1,2}(?:\.\d+)?|\d{1,2}:\d{1,2}:\d{1,2}(?:\.\d+)?|\d+(?:\.\d+)?\s*(?:s|sec|secs|second|seconds)\b|\d+\.\d+/gi
+  ) ?? [];
+
+  for (const candidate of candidates) {
+    const parsed = parseTimestamp(candidate);
+    if (parsed != null) return parsed;
+  }
 
   return null;
 }
@@ -52,7 +84,7 @@ function TimestampCell({
   value: string;
   onSeek?: (seconds: number) => void;
 }) {
-  const seconds = parseTimestamp(value);
+  const seconds = extractSeekSeconds(value);
   if (seconds == null || !onSeek) {
     return <>{value}</>;
   }
@@ -93,7 +125,7 @@ export function AnswerRenderer({ data, onSeek }: AnswerRendererProps) {
       );
     } else if (typeof value === "object" && value !== null) {
       sections.push(
-        <ObjectSection key={key} label={formatLabel(key)} obj={value as Row} />
+        <ObjectSection key={key} label={formatLabel(key)} obj={value as Row} onSeek={onSeek} />
       );
     }
   }
@@ -175,21 +207,25 @@ function ListSection({ label, items, onSeek }: { label: string; items: Row[]; on
               <tr key={i} className="border-b border-hud-border/50">
                 {columns.map((col) => {
                   const val = String(item[col] ?? "\u2014");
+                  const isPureTimestamp = timestampCols.has(col) && extractSeekSeconds(val) != null;
                   return (
                     <td key={col} className="px-2 py-1 text-hud-label max-w-[400px] whitespace-normal break-words">
-                      {timestampCols.has(col) ? (
+                      {isPureTimestamp ? (
                         <TimestampCell value={val} onSeek={onSeek} />
                       ) : (
-                        val
+                        <InlineTimestamps text={val} onSeek={onSeek} />
                       )}
                     </td>
                   );
                 })}
-                {arrayColumns.map((col) => (
-                  <td key={col} className="px-2 py-1 text-hud-label max-w-[300px] whitespace-normal break-words">
-                    {(item[col] as string[])?.join(", ") ?? "\u2014"}
-                  </td>
-                ))}
+                {arrayColumns.map((col) => {
+                  const joined = (item[col] as string[])?.join(", ") ?? "\u2014";
+                  return (
+                    <td key={col} className="px-2 py-1 text-hud-label max-w-[300px] whitespace-normal break-words">
+                      <InlineTimestamps text={joined} onSeek={onSeek} />
+                    </td>
+                  );
+                })}
               </tr>
             ))}
           </tbody>
@@ -206,17 +242,18 @@ function ListSection({ label, items, onSeek }: { label: string; items: Row[]; on
 export function InlineTimestamps({ text, onSeek }: { text: string; onSeek?: (s: number) => void }) {
   if (!onSeek) return <>{text}</>;
 
-  // Match timestamps in brackets, parens, or standalone MM:SS / HH:MM:SS patterns
-  const parts = text.split(/(\[[\d:.,\s–-]+\]|\([\d:.,\s–-]+\)|\b\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?\b)/g);
+  // Match timestamps in brackets/parens and standalone clock-like values.
+  // Examples: [00:22], (89.92-91.88), 00:44, 01:02:33.5, 00:12-00:20
+  const parts = text.split(
+    /(\[[^\]]+\]|\([^\)]+\)|\b\d{1,3}:\d{1,2}(?:[\.,]\d+)?(?:\s*[-‐‑‒–—―−]\s*\d{1,3}:\d{1,2}(?:[\.,]\d+)?)?\b|\b\d{1,2}:\d{1,2}:\d{1,2}(?:[\.,]\d+)?(?:\s*[-‐‑‒–—―−]\s*\d{1,2}:\d{1,2}:\d{1,2}(?:[\.,]\d+)?)?\b|\b\d+(?:[\.,]\d+)?\s*(?:s|sec|secs|second|seconds)(?:\s*[-‐‑‒–—―−]\s*\d+(?:[\.,]\d+)?\s*(?:s|sec|secs|second|seconds)?)?\b|\b\d+(?:[\.,]\d+)(?:\s*[-‐‑‒–—―−]\s*\d+(?:[\.,]\d+))?\b)/gi
+  );
 
   return (
     <>
       {parts.map((part, i) => {
-        // Strip brackets/parens for parsing
-        const stripped = part.replace(/^[[(]|[\])]$/g, "").trim();
-        // Take the start of a range
-        const start = stripped.split(/[-–,]/)[0].trim();
-        const seconds = parseTimestamp(start);
+        const stripped = part.replace(/^[\[(]|[\])]{1}$/g, "").trim();
+        const start = normalizeTimestampText(stripped).split(/\s*[-‐‑‒–—―−,]\s*/)[0].trim();
+        const seconds = extractSeekSeconds(start);
         if (seconds != null) {
           return (
             <button
@@ -253,19 +290,22 @@ function SimpleList({ label, items, onSeek }: { label: string; items: string[]; 
   );
 }
 
-function ObjectSection({ label, obj }: { label: string; obj: Row }) {
+function ObjectSection({ label, obj, onSeek }: { label: string; obj: Row; onSeek?: (s: number) => void }) {
   return (
     <div>
       <span className="block text-[13px] font-bold uppercase tracking-[0.15em] text-hud-dim mb-1">
         {label}
       </span>
       <div className="space-y-0.5">
-        {Object.entries(obj).map(([k, v]) => (
-          <div key={k} className="flex gap-2 text-[12px]">
-            <span className="text-hud-dim shrink-0">{formatLabel(k)}:</span>
-            <span className="text-hud-label">{String(v)}</span>
-          </div>
-        ))}
+        {Object.entries(obj).map(([k, v]) => {
+          const text = String(v);
+          return (
+            <div key={k} className="flex gap-2 text-[12px]">
+              <span className="text-hud-dim shrink-0">{formatLabel(k)}:</span>
+              <span className="text-hud-label"><InlineTimestamps text={text} onSeek={onSeek} /></span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

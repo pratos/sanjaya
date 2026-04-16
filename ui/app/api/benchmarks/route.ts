@@ -9,6 +9,67 @@ const GROUND_TRUTH: Record<number, string> = {
   2: "144 three-pointers",
 };
 
+async function directoryHasPromptFiles(relativeDir: string): Promise<boolean> {
+  try {
+    const files = await readdir(join(DATA_DIR, relativeDir));
+    return files.some((f) => f.startsWith("prompt_") && f.endsWith(".json"));
+  } catch {
+    return false;
+  }
+}
+
+async function countLvbPromptsInDir(relativeDir: string): Promise<number> {
+  try {
+    const dir = join(DATA_DIR, relativeDir);
+    const files = await readdir(dir);
+    const promptFiles = files.filter((f) => f.startsWith("prompt_") && f.endsWith(".json"));
+
+    let count = 0;
+    for (const file of promptFiles) {
+      try {
+        const raw = JSON.parse(await readFile(join(dir, file), "utf-8")) as {
+          video_key?: string;
+          prompt_id?: number;
+        };
+        const isLvb =
+          (typeof raw.video_key === "string" && raw.video_key.startsWith("lvb_")) ||
+          (typeof raw.prompt_id === "number" && raw.prompt_id >= 13);
+        if (isLvb) count += 1;
+      } catch {
+        // skip bad files
+      }
+    }
+
+    return count;
+  } catch {
+    return 0;
+  }
+}
+
+async function bestLvbPromptSubdir(root: string): Promise<string | null> {
+  try {
+    const entries = await readdir(join(DATA_DIR, root), { withFileTypes: true });
+    const subdirs = entries.filter((e) => e.isDirectory()).map((e) => e.name).sort().reverse();
+
+    let bestDir: string | null = null;
+    let bestCount = 0;
+
+    for (const dir of subdirs) {
+      const rel = `${root}/${dir}`;
+      const count = await countLvbPromptsInDir(rel);
+      if (count > bestCount) {
+        bestCount = count;
+        bestDir = rel;
+      }
+    }
+
+    if (bestDir && bestCount > 0) return bestDir;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 /** Auto-discover demo_results* directories and assign version labels. */
 async function discoverVersionDirs(): Promise<Record<string, string>> {
   let entries: string[];
@@ -23,14 +84,41 @@ async function discoverVersionDirs(): Promise<Record<string, string>> {
     .sort(); // demo_results, demo_results_v2, demo_results_v3, ...
 
   const versions: Record<string, string> = {};
+
+  // Standard flat layout: data/demo_results[_vN]/prompt_*.json
   for (const dir of dirs) {
-    // demo_results -> v1, demo_results_v2 -> v2, demo_results_v3 -> v3, etc.
     const match = dir.match(/^demo_results(?:_v(\d+))?$/);
-    if (match) {
-      const label = match[1] ? `v${match[1]}` : "v1";
+    if (!match) continue;
+
+    const label = match[1] ? `v${match[1]}` : "v1";
+    if (await directoryHasPromptFiles(dir)) {
       versions[label] = dir;
     }
   }
+
+  return versions;
+}
+
+async function discoverLvbVersionDirs(): Promise<Record<string, string>> {
+  let entries: string[];
+  try {
+    entries = await readdir(DATA_DIR);
+  } catch {
+    return {};
+  }
+
+  const versions: Record<string, string> = {};
+
+  // Per request: Trinity = v1, Codex53 = v2 for LVB prompts.
+  const trinityBest = entries.includes("demo_results_trinity")
+    ? await bestLvbPromptSubdir("demo_results_trinity")
+    : null;
+  if (trinityBest) versions.v1 = trinityBest;
+
+  const codexBest = entries.includes("demo_results_codex53")
+    ? await bestLvbPromptSubdir("demo_results_codex53")
+    : null;
+  if (codexBest) versions.v2 = codexBest;
 
   return versions;
 }
@@ -70,6 +158,69 @@ const VIDEO_META: Record<string, { path: string; title: string; channel: string;
     channel: "Boundary",
     youtubeId: "qdfwmYTO0Aw",
     duration: "50:14",
+  },
+  lvb_cooking: {
+    path: "longvideobench/videos/1R5uPaL0V-0.mp4",
+    title: "LongVideoBench — Cooking",
+    channel: "LongVideoBench",
+    youtubeId: "1R5uPaL0V-0",
+    duration: "16:48",
+  },
+  lvb_movie: {
+    path: "longvideobench/videos/N7RTTiHsSjI.mp4",
+    title: "LongVideoBench — Movie Recap",
+    channel: "LongVideoBench",
+    youtubeId: "N7RTTiHsSjI",
+    duration: "08:00",
+  },
+  lvb_travel: {
+    path: "longvideobench/videos/kOZnpwI2hIM.mp4",
+    title: "LongVideoBench — Travel",
+    channel: "LongVideoBench",
+    youtubeId: "kOZnpwI2hIM",
+    duration: "16:42",
+  },
+  lvb_history: {
+    path: "longvideobench/videos/fvCrE5NCsts.mp4",
+    title: "LongVideoBench — History",
+    channel: "LongVideoBench",
+    youtubeId: "fvCrE5NCsts",
+    duration: "08:30",
+  },
+  lvb_art: {
+    path: "longvideobench/videos/fZBC3nmvJb8.mp4",
+    title: "LongVideoBench — Art",
+    channel: "LongVideoBench",
+    youtubeId: "fZBC3nmvJb8",
+    duration: "20:06",
+  },
+  lvb_geography: {
+    path: "longvideobench/videos/lzAESaVqix0.mp4",
+    title: "LongVideoBench — Geography",
+    channel: "LongVideoBench",
+    youtubeId: "lzAESaVqix0",
+    duration: "19:48",
+  },
+  lvb_stem: {
+    path: "longvideobench/videos/zda-T6wrEhs.mp4",
+    title: "LongVideoBench — STEM",
+    channel: "LongVideoBench",
+    youtubeId: "zda-T6wrEhs",
+    duration: "08:30",
+  },
+  lvb_vlog: {
+    path: "longvideobench/videos/Jfp1Ks7Hh1E.mp4",
+    title: "LongVideoBench — Life Vlog",
+    channel: "LongVideoBench",
+    youtubeId: "Jfp1Ks7Hh1E",
+    duration: "15:12",
+  },
+  lvb_napoleon: {
+    path: "longvideobench/videos/P9hDA0u6FO0.mp4",
+    title: "LongVideoBench — Napoleon",
+    channel: "LongVideoBench",
+    youtubeId: "P9hDA0u6FO0",
+    duration: "33:18",
   },
 };
 
@@ -238,6 +389,21 @@ interface LiveRunEntry {
   data: ReturnType<typeof toCamelCase>;
 }
 
+function shouldSkipVideoLiveHistory(trace: TraceJson, runDir: string): boolean {
+  const runId = (trace.run_id ?? runDir).toLowerCase();
+
+  if (runId.startsWith("live_run_docs")) return true;
+  if (runId.startsWith("image_")) return true;
+
+  // Keep explicitly tagged video runs.
+  if (runId.startsWith("live_run_videos")) return false;
+
+  const question = (trace.question ?? "").toLowerCase();
+  if (question.includes("photo album retrieval")) return true;
+
+  return false;
+}
+
 /** Scan sanjaya_artifacts/ for live UI runs and convert to the same format as benchmark prompts. */
 async function loadLiveRuns(): Promise<LiveRunEntry[]> {
   const artifactsDir = join(process.cwd(), "..", "sanjaya_artifacts");
@@ -255,10 +421,14 @@ async function loadLiveRuns(): Promise<LiveRunEntry[]> {
 
   for (let i = 0; i < runDirs.length; i++) {
     const runDir = runDirs[i];
+    if (runDir.toLowerCase().startsWith("image_")) continue;
+
     const tracePath = join(artifactsDir, runDir, "trace.json");
     const manifestPath = join(artifactsDir, runDir, "manifest.json");
     try {
       const trace = JSON.parse(await readFile(tracePath, "utf-8")) as TraceJson;
+      if (shouldSkipVideoLiveHistory(trace, runDir)) continue;
+
       const promptId = 1000 + i;
 
       const promptName = trace.question.length > 50
@@ -330,12 +500,21 @@ async function loadLiveRuns(): Promise<LiveRunEntry[]> {
 export async function GET() {
   // Auto-discover version directories
   const versionDirs = await discoverVersionDirs();
+  const lvbVersionDirs = await discoverLvbVersionDirs();
 
   // Load benchmark versions
   const allResults: Array<{ version: string; data: ReturnType<typeof toCamelCase> }> = [];
   for (const [version, dirName] of Object.entries(versionDirs)) {
     const results = await loadVersion(version, dirName);
     allResults.push(...results);
+  }
+
+  // Load LVB prompt versions from dedicated runs.
+  for (const [version, dirName] of Object.entries(lvbVersionDirs)) {
+    const results = await loadVersion(version, dirName);
+    allResults.push(
+      ...results.filter(({ data }) => data.videoKey.startsWith("lvb_") || data.promptId >= 13),
+    );
   }
 
   // Group by prompt_id

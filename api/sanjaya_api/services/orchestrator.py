@@ -45,8 +45,8 @@ class OrchestratorService:
         subtitle_api_model: str = "gpt-4o-transcribe-diarize",
         max_iterations: int = 20,
     ) -> str:
-        """Start a new orchestration run in a background thread, return run_id."""
-        run_id = uuid4().hex[:12]
+        """Start a new video orchestration run in a background thread, return run_id."""
+        run_id = f"live_run_videos_{uuid4().hex[:12]}"
         record = RunRecord(run_id=run_id)
 
         with self._lock:
@@ -97,6 +97,7 @@ class OrchestratorService:
             resolved_video = self._resolve_video_path(video_path)
             answer = agent.ask(
                 question,
+                context={"run_id": record.run_id, "run_type": "live_run_videos"},
                 video=resolved_video,
                 subtitle=subtitle_path,
             )
@@ -167,7 +168,7 @@ class OrchestratorService:
         max_iterations: int = 12,
     ) -> str:
         """Start a document analysis run in a background thread."""
-        run_id = uuid4().hex[:12]
+        run_id = f"live_run_docs_{uuid4().hex[:12]}"
         record = RunRecord(run_id=run_id)
 
         with self._lock:
@@ -202,6 +203,7 @@ class OrchestratorService:
 
             answer = agent.ask(
                 question,
+                context={"run_id": record.run_id, "run_type": "live_run_docs"},
                 document=document_paths,
             )
 

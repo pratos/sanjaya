@@ -174,8 +174,11 @@ class VideoToolkit(Toolkit):
         if not self._video_path:
             return
 
+        run_context = context.get("context")
+        run_id = run_context.get("run_id") if isinstance(run_context, dict) else None
+
         # Create workspace
-        self._workspace = ArtifactWorkspace(base_dir=self.workspace_dir)
+        self._workspace = ArtifactWorkspace(base_dir=self.workspace_dir, run_id=run_id)
         self._mount = WorkspaceMount(str(self._workspace.run_dir))
 
         # Resolve subtitles

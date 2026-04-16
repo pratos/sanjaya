@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { BenchmarkPrompt, TraceEvent } from "@/lib/types";
+import { useCallback, useRef, useState } from "react";
+import type { BenchmarkPrompt } from "@/lib/types";
 import { videoStreamUrl } from "@/lib/api";
 import { AnswerRenderer, InlineTimestamps } from "./answer-renderer";
 import { NarrativeNote } from "./narrative-note";
@@ -14,6 +14,15 @@ const VIDEO_LABELS: Record<string, { title: string; channel: string; url: string
   mkbhd: { title: "iPhone 17 Review: No Asterisks!", channel: "Marques Brownlee", url: "https://www.youtube.com/watch?v=rng_yUSwrgU" },
   football: { title: "Manchester City v Arsenal | FA Cup 2022-23", channel: "The Emirates FA Cup", url: "https://www.youtube.com/watch?v=9gyv2xh7qQw" },
   tech_talk: { title: "Prompting Is Becoming a Product Surface", channel: "Boundary", url: "https://www.youtube.com/watch?v=qdfwmYTO0Aw" },
+  lvb_cooking: { title: "LongVideoBench — Cooking", channel: "LongVideoBench", url: "https://www.youtube.com/watch?v=1R5uPaL0V-0" },
+  lvb_movie: { title: "LongVideoBench — Movie Recap", channel: "LongVideoBench", url: "https://www.youtube.com/watch?v=N7RTTiHsSjI" },
+  lvb_travel: { title: "LongVideoBench — Travel", channel: "LongVideoBench", url: "https://www.youtube.com/watch?v=kOZnpwI2hIM" },
+  lvb_history: { title: "LongVideoBench — History", channel: "LongVideoBench", url: "https://www.youtube.com/watch?v=fvCrE5NCsts" },
+  lvb_art: { title: "LongVideoBench — Art", channel: "LongVideoBench", url: "https://www.youtube.com/watch?v=fZBC3nmvJb8" },
+  lvb_geography: { title: "LongVideoBench — Geography", channel: "LongVideoBench", url: "https://www.youtube.com/watch?v=lzAESaVqix0" },
+  lvb_stem: { title: "LongVideoBench — STEM", channel: "LongVideoBench", url: "https://www.youtube.com/watch?v=zda-T6wrEhs" },
+  lvb_vlog: { title: "LongVideoBench — Life Vlog", channel: "LongVideoBench", url: "https://www.youtube.com/watch?v=Jfp1Ks7Hh1E" },
+  lvb_napoleon: { title: "LongVideoBench — Napoleon", channel: "LongVideoBench", url: "https://www.youtube.com/watch?v=P9hDA0u6FO0" },
 };
 
 interface PromptDetailProps {
@@ -32,11 +41,10 @@ export function PromptDetail({ prompt }: PromptDetailProps) {
     ? selectedVersion
     : (versionKeys[0] ?? prompt.bestVersion);
 
-  const [traceEvents, setTraceEvents] = useState<TraceEvent[] | null>(null);
-  const [traceLoading, setTraceLoading] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const active = prompt.versions[activeVersion] ?? prompt.versions[prompt.bestVersion];
   const narrative = NARRATIVES[prompt.promptId];
+  const traceEvents = active?.traceEvents ?? null;
 
   const handleSeek = useCallback((seconds: number) => {
     const video = videoRef.current;
@@ -46,17 +54,6 @@ export function PromptDetail({ prompt }: PromptDetailProps) {
       video.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }
   }, []);
-
-  // Fetch trace events for this prompt's question
-  useEffect(() => {
-    setTraceEvents(null);
-    setTraceLoading(true);
-    fetch(`/api/traces?question=${encodeURIComponent(prompt.question)}`)
-      .then((r) => r.json())
-      .then((data) => setTraceEvents(data.events ?? []))
-      .catch(() => setTraceEvents(null))
-      .finally(() => setTraceLoading(false));
-  }, [prompt.question]);
 
   if (!active) return null;
 
@@ -226,12 +223,7 @@ export function PromptDetail({ prompt }: PromptDetailProps) {
           </div>
         </div>
 
-        {/* Trace timeline */}
-        {traceLoading && (
-          <span className="text-[12px] uppercase tracking-wider text-hud-dim animate-pulse">
-            Loading trace...
-          </span>
-        )}
+        {/* Trace timeline (version-specific) */}
         {traceEvents && traceEvents.length > 0 && (
           <div className="h-80">
             <TraceTimeline
