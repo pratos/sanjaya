@@ -1,10 +1,11 @@
-import { readdir, readFile, access } from "fs/promises";
+import { readdir, readFile, access, stat } from "fs/promises";
 import { join } from "path";
 import { NextResponse } from "next/server";
 
 const DATA_DIR = join(process.cwd(), "..", "data");
 const BENCHMARK_RESULTS_DIR = join(DATA_DIR, "benchmark_results");
 const MUIRBENCH_MANIFEST_PATH = join(DATA_DIR, "benchmarks", "muirbench", "manifest.json");
+const PHOTOBENCH_MANIFEST_PATH = join(DATA_DIR, "benchmarks", "photobench", "manifest.json");
 
 /* ── Shared helpers ─────────────────────────────────────── */
 
@@ -105,6 +106,101 @@ function getMuirbenchIndex(): Promise<Map<string, MuirbenchSampleRaw>> {
     muirbenchIndexPromise = loadMuirbenchIndex();
   }
   return muirbenchIndexPromise;
+}
+
+/* ── PhotoBench manifest ────────────────────────────────── */
+
+interface PhotobenchAlbumRaw {
+  name: string;
+  path: string;
+  image_count: number;
+}
+
+interface PhotobenchQueryRaw {
+  query_id: string;
+  query: string;
+  album: string;
+  ground_truth: string[];
+}
+
+interface PhotobenchManifestRaw {
+  albums?: PhotobenchAlbumRaw[];
+  queries?: {
+    train?: PhotobenchQueryRaw[];
+    test?: PhotobenchQueryRaw[];
+  };
+}
+
+interface PhotobenchQueryMeta {
+  queryId: string;
+  query: string;
+  album: string;
+  albumPath: string | null;
+  groundTruth: string[];
+}
+
+interface PhotobenchManifestIndex {
+  albumPathByName: Map<string, string>;
+  expectedQueriesByAlbum: Map<string, number>;
+  queryById: Map<string, PhotobenchQueryMeta>;
+}
+
+let photobenchManifestIndexPromise: Promise<PhotobenchManifestIndex> | null = null;
+
+async function loadPhotobenchManifestIndex(): Promise<PhotobenchManifestIndex> {
+  try {
+    const raw = await readFile(PHOTOBENCH_MANIFEST_PATH, "utf-8");
+    const manifest = JSON.parse(raw) as PhotobenchManifestRaw;
+
+    const albumPathByName = new Map<string, string>();
+    for (const album of manifest.albums ?? []) {
+      if (album?.name && album?.path) {
+        albumPathByName.set(album.name, album.path);
+      }
+    }
+
+    const queryById = new Map<string, PhotobenchQueryMeta>();
+    const expectedQueriesByAlbum = new Map<string, number>();
+    const allQueries = [
+      ...(manifest.queries?.test ?? []),
+      ...(manifest.queries?.train ?? []),
+    ];
+
+    for (const query of allQueries) {
+      const album = query.album;
+      if (!album || !query.query_id) continue;
+
+      const currentCount = expectedQueriesByAlbum.get(album) ?? 0;
+      expectedQueriesByAlbum.set(album, currentCount + 1);
+
+      queryById.set(query.query_id, {
+        queryId: query.query_id,
+        query: query.query,
+        album,
+        albumPath: albumPathByName.get(album) ?? null,
+        groundTruth: Array.isArray(query.ground_truth) ? query.ground_truth : [],
+      });
+    }
+
+    return {
+      albumPathByName,
+      expectedQueriesByAlbum,
+      queryById,
+    };
+  } catch {
+    return {
+      albumPathByName: new Map<string, string>(),
+      expectedQueriesByAlbum: new Map<string, number>(),
+      queryById: new Map<string, PhotobenchQueryMeta>(),
+    };
+  }
+}
+
+function getPhotobenchManifestIndex(): Promise<PhotobenchManifestIndex> {
+  if (!photobenchManifestIndexPromise) {
+    photobenchManifestIndexPromise = loadPhotobenchManifestIndex();
+  }
+  return photobenchManifestIndexPromise;
 }
 
 /* ── Config loading ─────────────────────────────────────── */
@@ -240,6 +336,8 @@ interface PhotobenchResultRaw {
     fp: number;
     fn: number;
   };
+  reasoning?: string;
+  evidence?: unknown[];
   raw_answer: string;
   iterations: number;
   cost_usd: number;
@@ -250,22 +348,59 @@ interface PhotobenchResultRaw {
   trace_events?: TraceEvent[];
 }
 
-function photobenchToImageResult(raw: PhotobenchResultRaw, promptId: number): NormalizedResult {
+function unique(values: Array<string | null | undefined>): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    if (!value) continue;
+    if (seen.has(value)) continue;
+    seen.add(value);
+    result.push(value);
+  }
+  return result;
+}
+
+function photobenchToImageResult(
+  raw: PhotobenchResultRaw,
+  promptId: number,
+  photobenchIndex: PhotobenchManifestIndex,
+): NormalizedResult {
+  const queryMeta = photobenchIndex.queryById.get(raw.query_id);
+  const album = queryMeta?.album ?? raw.query_id.split("_")[0] ?? "unknown";
+  const albumPath = queryMeta?.albumPath ?? photobenchIndex.albumPathByName.get(album) ?? null;
+
+  const predictionImagePaths = unique(
+    (raw.predictions ?? []).map((fileName) => (albumPath ? join(albumPath, "images", fileName) : null)),
+  );
+
+  const groundTruthValues = raw.ground_truth ?? queryMeta?.groundTruth ?? [];
+  const groundTruthImagePaths = unique(
+    groundTruthValues.map((fileName) => (albumPath ? join(albumPath, "images", fileName) : null)),
+  );
+
+  const imagePaths = unique([...groundTruthImagePaths, ...predictionImagePaths]);
+
   return {
     promptId,
     promptName: `photo_${raw.query_id}`,
-    imagePaths: [] as string[],
+    imagePaths,
     question: raw.query,
     answerText: raw.raw_answer ?? "",
     answerData: {
       benchmark: "PhotoBench",
       query_id: raw.query_id,
-      predictions: raw.predictions,
-      ground_truth: raw.ground_truth,
+      album,
+      album_path: albumPath,
+      predictions: raw.predictions ?? [],
+      ground_truth: groundTruthValues,
+      prediction_image_paths: predictionImagePaths,
+      ground_truth_image_paths: groundTruthImagePaths,
       metrics: raw.metrics,
+      reasoning: raw.reasoning ?? null,
+      evidence: raw.evidence ?? [],
       correct: raw.metrics?.tp > 0 && raw.metrics?.fp === 0 && raw.metrics?.fn === 0,
     } as Record<string, unknown>,
-    groundTruth: raw.ground_truth?.join(", ") ?? null,
+    groundTruth: groundTruthValues.join(", ") || null,
     iterations: raw.iterations ?? 0,
     costUsd: raw.cost_usd ?? 0,
     inputTokens: raw.input_tokens ?? 0,
@@ -331,17 +466,21 @@ interface LoadedRun {
   runName: string;
   config: RunConfig;
   results: NormalizedResult[];
+  runDirName: string;
+  updatedAtMs: number;
 }
 
 async function loadRun(
   benchmarkName: string,
+  runDirName: string,
   runDir: string,
   muirbenchIndex: Map<string, MuirbenchSampleRaw>,
+  photobenchIndex: PhotobenchManifestIndex,
 ): Promise<LoadedRun | null> {
   const config = await loadConfig(runDir);
   if (!config) return null;
 
-  const runName = config.run_name ?? benchmarkName;
+  const runName = config.run_name ?? runDirName;
   const benchmark = config.benchmark?.toLowerCase() ?? benchmarkName;
 
   // Try results.json first, fall back to checkpoint.jsonl
@@ -349,10 +488,12 @@ async function loadRun(
   const resultsPath = join(runDir, "results.json");
   const checkpointPath = join(runDir, "checkpoint.jsonl");
 
+  let sourcePath: string | null = null;
   if (await exists(resultsPath)) {
     try {
       const raw = await readFile(resultsPath, "utf-8");
       rawResults = JSON.parse(raw);
+      sourcePath = resultsPath;
     } catch {
       // fall through to checkpoint
     }
@@ -362,6 +503,7 @@ async function loadRun(
     try {
       const raw = await readFile(checkpointPath, "utf-8");
       rawResults = parseCheckpointLines(raw);
+      sourcePath = checkpointPath;
     } catch {
       // skip
     }
@@ -373,19 +515,84 @@ async function loadRun(
   const results = rawResults.map((raw) => {
     if (benchmark === "muirbench") {
       return muirbenchToImageResult(raw as MuirbenchResultRaw, promptId++, muirbenchIndex);
-    } else if (benchmark === "photobench") {
-      return photobenchToImageResult(raw as PhotobenchResultRaw, promptId++);
-    } else {
-      // Generic fallback — treat as muirbench-like
-      return muirbenchToImageResult(raw as MuirbenchResultRaw, promptId++, muirbenchIndex);
     }
+    if (benchmark === "photobench") {
+      return photobenchToImageResult(raw as PhotobenchResultRaw, promptId++, photobenchIndex);
+    }
+    // Generic fallback — treat as muirbench-like
+    return muirbenchToImageResult(raw as MuirbenchResultRaw, promptId++, muirbenchIndex);
   });
 
-  return { benchmark, runName, config, results };
+  let updatedAtMs = 0;
+  if (sourcePath) {
+    try {
+      updatedAtMs = (await stat(sourcePath)).mtimeMs;
+    } catch {
+      updatedAtMs = 0;
+    }
+  }
+
+  return { benchmark, runName, config, results, runDirName, updatedAtMs };
+}
+
+function inferPhotobenchAlbum(run: LoadedRun): string | null {
+  const albumsConfig = run.config.albums;
+  if (albumsConfig && typeof albumsConfig === "object") {
+    const keys = Object.keys(albumsConfig as Record<string, unknown>);
+    if (keys.length > 0) return keys[0];
+  }
+
+  const first = run.results[0];
+  const queryId = first?.answerData?.["query_id"];
+  if (typeof queryId === "string" && queryId.includes("_")) {
+    return queryId.split("_")[0] ?? null;
+  }
+
+  return null;
+}
+
+function selectLatestFullPhotobenchRuns(
+  runs: LoadedRun[],
+  photobenchIndex: PhotobenchManifestIndex,
+): LoadedRun[] {
+  const nonPhotobench = runs.filter((run) => run.benchmark !== "photobench");
+  const photobenchRuns = runs.filter((run) => run.benchmark === "photobench");
+
+  const latestByAlbum = new Map<string, LoadedRun>();
+
+  for (const run of photobenchRuns) {
+    const album = inferPhotobenchAlbum(run);
+    if (!album) continue;
+
+    const totalQueriesConfig = typeof run.config.total_queries === "number"
+      ? run.config.total_queries
+      : null;
+    const expectedByManifest = photobenchIndex.expectedQueriesByAlbum.get(album) ?? null;
+    const expected = totalQueriesConfig ?? expectedByManifest ?? 0;
+    const isFull = expected > 0 ? run.results.length >= expected : run.results.length > 0;
+    if (!isFull) continue;
+
+    const existing = latestByAlbum.get(album);
+    if (!existing) {
+      latestByAlbum.set(album, run);
+      continue;
+    }
+
+    const isNewer =
+      run.updatedAtMs > existing.updatedAtMs ||
+      (run.updatedAtMs === existing.updatedAtMs && run.runDirName > existing.runDirName);
+
+    if (isNewer) {
+      latestByAlbum.set(album, run);
+    }
+  }
+
+  return [...nonPhotobench, ...Array.from(latestByAlbum.values())];
 }
 
 async function discoverRuns(): Promise<LoadedRun[]> {
   const muirbenchIndex = await getMuirbenchIndex();
+  const photobenchIndex = await getPhotobenchManifestIndex();
   const runs: LoadedRun[] = [];
 
   let benchmarkDirs: string[];
@@ -407,12 +614,13 @@ async function discoverRuns(): Promise<LoadedRun[]> {
 
     for (const runDirName of runDirs.sort()) {
       const runDir = join(benchmarkDir, runDirName);
-      const run = await loadRun(benchmarkName, runDir, muirbenchIndex);
+      const run = await loadRun(benchmarkName, runDirName, runDir, muirbenchIndex, photobenchIndex);
       if (run) runs.push(run);
     }
   }
 
-  return runs;
+  const selectedRuns = selectLatestFullPhotobenchRuns(runs, photobenchIndex);
+  return selectedRuns.sort((a, b) => a.benchmark.localeCompare(b.benchmark) || a.runName.localeCompare(b.runName));
 }
 
 /* ── GET handler ────────────────────────────────────────── */

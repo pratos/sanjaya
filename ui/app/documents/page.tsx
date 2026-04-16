@@ -73,7 +73,6 @@ function DocumentDetail({ prompt }: { prompt: DocumentPrompt }) {
               }`}
             >
               {v.toUpperCase()}
-              {v === prompt.bestVersion && <span className="ml-1.5 text-[12px] text-hud-green">BEST</span>}
             </button>
           ))}
         </div>

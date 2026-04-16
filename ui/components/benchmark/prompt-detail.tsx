@@ -21,12 +21,21 @@ interface PromptDetailProps {
 }
 
 export function PromptDetail({ prompt }: PromptDetailProps) {
-  const versionKeys = Object.keys(prompt.versions).sort();
-  const [activeVersion, setActiveVersion] = useState(prompt.bestVersion);
+  const hiddenVersions = new Set(["v6", "v7"]);
+  const allVersionKeys = Object.keys(prompt.versions).sort();
+  const visibleVersionKeys = allVersionKeys.filter((v) => !hiddenVersions.has(v.toLowerCase()));
+  const nonErrorVersionKeys = visibleVersionKeys.filter((v) => !prompt.versions[v]?.error);
+  const versionKeys = nonErrorVersionKeys.length > 0 ? nonErrorVersionKeys : visibleVersionKeys;
+
+  const [selectedVersion, setSelectedVersion] = useState(prompt.bestVersion);
+  const activeVersion = versionKeys.includes(selectedVersion)
+    ? selectedVersion
+    : (versionKeys[0] ?? prompt.bestVersion);
+
   const [traceEvents, setTraceEvents] = useState<TraceEvent[] | null>(null);
   const [traceLoading, setTraceLoading] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const active = prompt.versions[activeVersion];
+  const active = prompt.versions[activeVersion] ?? prompt.versions[prompt.bestVersion];
   const narrative = NARRATIVES[prompt.promptId];
 
   const handleSeek = useCallback((seconds: number) => {
@@ -57,12 +66,11 @@ export function PromptDetail({ prompt }: PromptDetailProps) {
       {versionKeys.length > 1 && (
         <div className="flex border-b border-hud-border">
           {versionKeys.map((v) => {
-            const isBest = v === prompt.bestVersion;
             const isActive = v === activeVersion;
             return (
               <button
                 key={v}
-                onClick={() => setActiveVersion(v)}
+                onClick={() => setSelectedVersion(v)}
                 className={`px-4 py-1.5 text-[12px] font-bold uppercase tracking-[0.15em] transition-colors ${
                   isActive
                     ? "bg-hud-panel text-foreground border-b-2 border-hud-green"
@@ -70,9 +78,6 @@ export function PromptDetail({ prompt }: PromptDetailProps) {
                 }`}
               >
                 {v.toUpperCase()}
-                {isBest && (
-                  <span className="ml-1.5 text-[8px] text-hud-green">BEST</span>
-                )}
               </button>
             );
           })}
@@ -161,7 +166,7 @@ export function PromptDetail({ prompt }: PromptDetailProps) {
                     <th className="px-2 py-1 text-left text-[13px] font-bold uppercase tracking-wider text-hud-dim w-24">Metric</th>
                     {versionKeys.map((v) => (
                       <th key={v} className={`px-2 py-1 text-right text-[13px] font-bold uppercase tracking-wider ${v === prompt.bestVersion ? "text-hud-green" : "text-hud-dim"}`}>
-                        {v.toUpperCase()}{v === prompt.bestVersion ? " ★" : ""}
+                        {v.toUpperCase()}
                       </th>
                     ))}
                   </tr>
