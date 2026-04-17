@@ -242,10 +242,10 @@ function ListSection({ label, items, onSeek }: { label: string; items: Row[]; on
 export function InlineTimestamps({ text, onSeek }: { text: string; onSeek?: (s: number) => void }) {
   if (!onSeek) return <>{text}</>;
 
-  // Match timestamps in brackets/parens and standalone clock-like values.
-  // Examples: [00:22], (89.92-91.88), 00:44, 01:02:33.5, 00:12-00:20
+  // Match standalone clock-like values and numeric ranges only.
+  // Avoid matching arbitrary bracketed text like full JSON/list chunks.
   const parts = text.split(
-    /(\[[^\]]+\]|\([^\)]+\)|\b\d{1,3}:\d{1,2}(?:[\.,]\d+)?(?:\s*[-‐‑‒–—―−]\s*\d{1,3}:\d{1,2}(?:[\.,]\d+)?)?\b|\b\d{1,2}:\d{1,2}:\d{1,2}(?:[\.,]\d+)?(?:\s*[-‐‑‒–—―−]\s*\d{1,2}:\d{1,2}:\d{1,2}(?:[\.,]\d+)?)?\b|\b\d+(?:[\.,]\d+)?\s*(?:s|sec|secs|second|seconds)(?:\s*[-‐‑‒–—―−]\s*\d+(?:[\.,]\d+)?\s*(?:s|sec|secs|second|seconds)?)?\b|\b\d+(?:[\.,]\d+)(?:\s*[-‐‑‒–—―−]\s*\d+(?:[\.,]\d+))?\b)/gi
+    /(\b\d{1,2}:\d{1,2}:\d{1,2}(?:[\.,]\d+)?(?:\s*[-‐‑‒–—―−]\s*\d{1,2}:\d{1,2}:\d{1,2}(?:[\.,]\d+)?)?\b|\b\d{1,3}:\d{1,2}(?:[\.,]\d+)?(?:\s*[-‐‑‒–—―−]\s*\d{1,3}:\d{1,2}(?:[\.,]\d+)?)?\b|\b\d+(?:[\.,]\d+)?\s*(?:s|sec|secs|second|seconds)(?:\s*[-‐‑‒–—―−]\s*\d+(?:[\.,]\d+)?\s*(?:s|sec|secs|second|seconds)?)?\b|\b\d+(?:[\.,]\d+)\s*[-‐‑‒–—―−]\s*\d+(?:[\.,]\d+)\b)/gi
   );
 
   return (

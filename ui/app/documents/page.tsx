@@ -176,7 +176,7 @@ export default function DocumentBenchmarks() {
             <div className="h-6 w-px bg-hud-border" />
             <Link
               href="/documents/run"
-              className="flex items-center gap-1.5 border border-foreground px-3 py-1.5 text-[12px] font-bold uppercase tracking-[0.2em] text-foreground transition-colors hover:bg-foreground hover:text-background"
+              className="flex items-center gap-1.5 whitespace-nowrap border border-foreground px-3 py-1.5 text-[12px] font-bold uppercase tracking-[0.12em] leading-none text-foreground transition-colors hover:bg-foreground hover:text-background"
             >
               <Play size={12} />
               Live Run

@@ -222,6 +222,13 @@ const VIDEO_META: Record<string, { path: string; title: string; channel: string;
     youtubeId: "P9hDA0u6FO0",
     duration: "33:18",
   },
+  lvb_dejavu: {
+    path: "longvideobench/videos/86CxyhFV9MI.mp4",
+    title: "LongVideoBench — Deja Vu Stage",
+    channel: "LongVideoBench",
+    youtubeId: "86CxyhFV9MI",
+    duration: "03:10",
+  },
 };
 
 interface TraceEvent {
@@ -343,6 +350,223 @@ async function loadVersion(version: string, dirName: string) {
   return results;
 }
 
+const LVB_DEJAVU_VIDEO_ID = "86CxyhFV9MI";
+const LVB_DEJAVU_VIDEO_KEY = "lvb_dejavu";
+const LVB_DEJAVU_PROMPTS = new Map<string, { id: number; name: string; question?: string }>([
+  ["whats the summary of the video", { id: 22, name: "lvb_dejavu_summary" }],
+  ["whats happening with this video", { id: 23, name: "lvb_dejavu_happening" }],
+  [
+    "can you give me a summary of what the video is about in 200 words and find how many people are dancing in the video",
+    {
+      id: 24,
+      name: "lvb_dejavu_summary_dancers",
+      question: "Give me a summary and how many dancers are present in the video",
+    },
+  ],
+]);
+
+function decodeQuotedString(raw: string): string {
+  try {
+    return JSON.parse(`"${raw}"`) as string;
+  } catch {
+    return raw
+      .replace(/\\n/g, "\n")
+      .replace(/\\"/g, '"')
+      .replace(/\\'/g, "'");
+  }
+}
+
+function normalizeQuestionKey(question: string): string {
+  return question
+    .toLowerCase()
+    .replace(/[’']/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function extractQuestionFromTraceEvents(traceEvents: TraceEvent[]): string | null {
+  let preview: string | null = null;
+
+  for (const event of traceEvents) {
+    const payload = (event.payload ?? {}) as Record<string, unknown>;
+    if (!preview && typeof payload.question_preview === "string") {
+      preview = payload.question_preview.trim();
+    }
+
+    const code = payload.code_content;
+    if (typeof code !== "string") continue;
+
+    const m = code.match(/list_candidate_windows\(\s*question="([\s\S]*?)"\s*,/);
+    if (m) {
+      return decodeQuotedString(m[1]).trim();
+    }
+  }
+
+  return preview;
+}
+
+function extractFinalAnswerFromCode(code: string): string | null {
+  const triple = code.match(/done\(\s*"""([\s\S]*?)"""\s*\)\s*$/);
+  if (triple) return triple[1].trim();
+
+  const direct = code.match(/done\(\s*"([\s\S]*?)"\s*\)\s*$/);
+  if (direct) return decodeQuotedString(direct[1]).trim();
+
+  const doneVar = code.match(/done\(\s*([A-Za-z_]\w*)\s*\)\s*$/);
+  if (!doneVar) return null;
+
+  const varName = doneVar[1];
+  const assignment = code.match(new RegExp(`${varName}\\s*=\\s*\\(([\\s\\S]*?)\\)\\s*done\\(\\s*${varName}\\s*\\)\\s*$`));
+  if (!assignment) return null;
+
+  const pieces = Array.from(assignment[1].matchAll(/"((?:\\.|[^"\\])*)"/g)).map((m) => decodeQuotedString(m[1]));
+  if (pieces.length === 0) return null;
+
+  return pieces.join("").trim();
+}
+
+async function loadLvbDejavuArtifactPrompts(): Promise<Array<{ version: string; data: ReturnType<typeof toCamelCase> }>> {
+  const artifactsRoot = join(DATA_DIR, "longvideobench", "artifacts");
+
+  type Candidate = {
+    runDir: string;
+    question: string;
+    answerText: string;
+    iterations: number;
+    inputTokens: number;
+    outputTokens: number;
+    wallTimeS: number;
+    evidenceCount: number;
+    traceEvents: TraceEvent[];
+  };
+
+  let entries: Array<{ name: string; isDirectory: () => boolean }>;
+  try {
+    entries = await readdir(artifactsRoot, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const byQuestion = new Map<string, Candidate>();
+  const runDirs = entries
+    .filter((e) => e.isDirectory())
+    .map((e) => e.name)
+    .sort()
+    .reverse();
+
+  for (const runDir of runDirs) {
+    const manifestPath = join(artifactsRoot, runDir, "manifest.json");
+
+    let manifest: { trace_events?: TraceEvent[] };
+    try {
+      manifest = JSON.parse(await readFile(manifestPath, "utf-8")) as { trace_events?: TraceEvent[] };
+    } catch {
+      continue;
+    }
+
+    const traceEvents = manifest.trace_events ?? [];
+    if (!Array.isArray(traceEvents) || traceEvents.length === 0) continue;
+
+    const runStart = traceEvents.find((e) => typeof (e.payload as Record<string, unknown> | undefined)?.video_path === "string");
+    const videoPath = (runStart?.payload as Record<string, unknown> | undefined)?.video_path;
+    if (typeof videoPath !== "string" || !videoPath.includes(`${LVB_DEJAVU_VIDEO_ID}.mp4`)) continue;
+
+    const question = extractQuestionFromTraceEvents(traceEvents);
+    if (!question) continue;
+
+    let answerText = "";
+    for (let i = traceEvents.length - 1; i >= 0; i--) {
+      const payload = (traceEvents[i]?.payload ?? {}) as Record<string, unknown>;
+      if (payload.has_final_answer && typeof payload.code_content === "string") {
+        const extracted = extractFinalAnswerFromCode(payload.code_content);
+        if (extracted) {
+          answerText = extracted;
+          break;
+        }
+      }
+    }
+
+    const iterations = traceEvents.reduce((max, e) => {
+      const value = Number((e.payload as Record<string, unknown> | undefined)?.iteration);
+      return Number.isFinite(value) ? Math.max(max, value) : max;
+    }, 0);
+
+    let inputTokens = 0;
+    let outputTokens = 0;
+    const evidenceIds = new Set<string>();
+    const timestamps: number[] = [];
+
+    for (const e of traceEvents) {
+      const payload = (e.payload ?? {}) as Record<string, unknown>;
+      inputTokens += Number(payload.input_tokens) || 0;
+      outputTokens += Number(payload.output_tokens) || 0;
+
+      if (typeof payload.clip_id === "string") {
+        evidenceIds.add(payload.clip_id);
+      }
+
+      if (Number.isFinite(e.timestamp)) {
+        timestamps.push(Number(e.timestamp));
+      }
+    }
+
+    const wallTimeS = timestamps.length > 1 ? Math.max(0, timestamps[timestamps.length - 1] - timestamps[0]) : 0;
+    const key = normalizeQuestionKey(question);
+
+    const existing = byQuestion.get(key);
+    const candidate: Candidate = {
+      runDir,
+      question,
+      answerText,
+      iterations,
+      inputTokens,
+      outputTokens,
+      wallTimeS,
+      evidenceCount: evidenceIds.size,
+      traceEvents,
+    };
+
+    if (!existing || (!existing.answerText && candidate.answerText)) {
+      byQuestion.set(key, candidate);
+    }
+  }
+
+  let nextPromptId = 24;
+  const results: Array<{ version: string; data: ReturnType<typeof toCamelCase> }> = [];
+
+  for (const [questionKey, candidate] of Array.from(byQuestion.entries()).sort(([a], [b]) => a.localeCompare(b))) {
+    const predefined = LVB_DEJAVU_PROMPTS.get(questionKey);
+    const promptId = predefined?.id ?? nextPromptId++;
+    const promptName = predefined?.name ?? `lvb_dejavu_prompt_${promptId}`;
+
+    const raw: RawResult = {
+      prompt_id: promptId,
+      prompt_name: promptName,
+      video_key: LVB_DEJAVU_VIDEO_KEY,
+      question: predefined?.question ?? candidate.question,
+      answer_text: candidate.answerText,
+      answer_data: null,
+      iterations: candidate.iterations || 1,
+      cost_usd: 0,
+      input_tokens: candidate.inputTokens,
+      output_tokens: candidate.outputTokens,
+      wall_time_s: candidate.wallTimeS,
+      evidence_count: candidate.evidenceCount,
+      evidence_sources: [`artifact:${candidate.runDir}`],
+      subtitle: {
+        had_existing_subtitle: true,
+        subtitle_generated: false,
+        subtitle_source: "existing",
+      },
+      trace_events: candidate.traceEvents,
+    };
+
+    results.push({ version: "v1", data: toCamelCase(raw) });
+  }
+
+  return results;
+}
+
 /** Trace JSON written by agent._persist_trace for each live run. */
 interface TraceJson {
   run_id: string;
@@ -379,6 +603,80 @@ function extractVideoPath(trace: TraceJson): string | null {
   // Fall back to filename
   const parts = full.split("/");
   return parts[parts.length - 1];
+}
+
+async function loadLvbDejavuLivePrompts(): Promise<Array<{ version: string; data: ReturnType<typeof toCamelCase> }>> {
+  const artifactsDir = join(process.cwd(), "..", "sanjaya_artifacts");
+
+  let runDirs: string[];
+  try {
+    runDirs = await readdir(artifactsDir);
+  } catch {
+    return [];
+  }
+
+  const byQuestion = new Map<string, { runDir: string; trace: TraceJson }>();
+  const sorted = [...runDirs].sort().reverse();
+
+  for (const runDir of sorted) {
+    const tracePath = join(artifactsDir, runDir, "trace.json");
+
+    let trace: TraceJson;
+    try {
+      trace = JSON.parse(await readFile(tracePath, "utf-8")) as TraceJson;
+    } catch {
+      continue;
+    }
+
+    const videoPath = extractVideoPath(trace);
+    if (!videoPath || !videoPath.includes(`${LVB_DEJAVU_VIDEO_ID}.mp4`)) continue;
+
+    const key = normalizeQuestionKey(trace.question ?? "");
+    if (!LVB_DEJAVU_PROMPTS.has(key)) continue;
+
+    const existing = byQuestion.get(key);
+    const hasAnswer = Boolean(trace.answer || trace.answer_data);
+    const existingHasAnswer = Boolean(existing?.trace.answer || existing?.trace.answer_data);
+
+    if (!existing || (!existingHasAnswer && hasAnswer)) {
+      byQuestion.set(key, { runDir, trace });
+    }
+  }
+
+  const results: Array<{ version: string; data: ReturnType<typeof toCamelCase> }> = [];
+
+  for (const [questionKey, { runDir, trace }] of Array.from(byQuestion.entries()).sort(([a], [b]) => a.localeCompare(b))) {
+    const predefined = LVB_DEJAVU_PROMPTS.get(questionKey);
+    if (!predefined) continue;
+
+    const answerText = typeof trace.answer === "string" ? trace.answer : JSON.stringify(trace.answer ?? "");
+
+    const raw: RawResult = {
+      prompt_id: predefined.id,
+      prompt_name: predefined.name,
+      video_key: LVB_DEJAVU_VIDEO_KEY,
+      question: predefined.question ?? trace.question,
+      answer_text: answerText,
+      answer_data: trace.answer_data ?? null,
+      iterations: trace.iterations ?? 0,
+      cost_usd: trace.cost?.total_cost_usd ?? 0,
+      input_tokens: trace.cost?.total_input_tokens ?? 0,
+      output_tokens: trace.cost?.total_output_tokens ?? 0,
+      wall_time_s: trace.wall_time_s ?? 0,
+      evidence_count: trace.evidence_count ?? 0,
+      evidence_sources: [`artifact:${runDir}`],
+      subtitle: {
+        had_existing_subtitle: true,
+        subtitle_generated: false,
+        subtitle_source: "existing",
+      },
+      trace_events: trace.events,
+    };
+
+    results.push({ version: "v1", data: toCamelCase(raw) });
+  }
+
+  return results;
 }
 
 interface LiveRunEntry {
@@ -516,6 +814,12 @@ export async function GET() {
       ...results.filter(({ data }) => data.videoKey.startsWith("lvb_") || data.promptId >= 13),
     );
   }
+
+  const lvbDejavuResults = await loadLvbDejavuArtifactPrompts();
+  allResults.push(...lvbDejavuResults);
+
+  const lvbDejavuLiveResults = await loadLvbDejavuLivePrompts();
+  allResults.push(...lvbDejavuLiveResults);
 
   // Group by prompt_id
   const byPrompt = new Map<number, Record<string, ReturnType<typeof toCamelCase>>>();

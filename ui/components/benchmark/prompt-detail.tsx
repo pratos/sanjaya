@@ -23,6 +23,7 @@ const VIDEO_LABELS: Record<string, { title: string; channel: string; url: string
   lvb_stem: { title: "LongVideoBench — STEM", channel: "LongVideoBench", url: "https://www.youtube.com/watch?v=zda-T6wrEhs" },
   lvb_vlog: { title: "LongVideoBench — Life Vlog", channel: "LongVideoBench", url: "https://www.youtube.com/watch?v=Jfp1Ks7Hh1E" },
   lvb_napoleon: { title: "LongVideoBench — Napoleon", channel: "LongVideoBench", url: "https://www.youtube.com/watch?v=P9hDA0u6FO0" },
+  lvb_dejavu: { title: "LongVideoBench — Deja Vu Stage", channel: "LongVideoBench", url: "https://www.youtube.com/watch?v=86CxyhFV9MI" },
 };
 
 interface PromptDetailProps {
