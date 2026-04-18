@@ -469,6 +469,12 @@ answer2 = agent.ask("Second question", video="/path/to/v2.mp4")
 print(f"Cost after reset: ${agent.cost_so_far:.4f}")  # Only includes answer2
 ```
 
+## Writing
+
+- **[Building Sanjaya: An RLM Agent That Programs Its Way Through Videos and Images](docs/building-sanjaya.md)** — Lessons, benchmarks, and design decisions from building the library.
+- [RLM Comparison: alexzhang13/rlm vs Sanjaya](docs/rlm-comparison-and-takeaways.md) — Detailed technical comparison with the reference RLM implementation.
+- [Video Understanding Approaches Compared](docs/video-understanding-approaches-compared.md) — Sanjaya vs Gemini vs TwelveLabs (projected cost comparison).
+
 ## Status
 
 Sanjaya is actively developed. Core video + document flows are working, and evaluation/dashboard tooling is still evolving.
