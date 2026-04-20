@@ -8,10 +8,12 @@ x-article-site/
 x-draft-*.md
 media/
 *.mp4
+*.gif
 sanjaya_video.py
 *gz
 .venv-manim
 cf-static
+assets/
 .wrangler/
 
 nbs/sanjaya_artifacts

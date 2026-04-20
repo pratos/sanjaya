@@ -1,8 +1,6 @@
 # Sanjaya
 
-Sanjaya is a Python library for building evidence-first RLM (Recursive Language Model) agents.
-
-It runs a loop where the model writes Python, executes it in a sandboxed REPL, inspects results, calls tools, and iterates until it can return a grounded answer.
+Sanjaya is an open-source Python library inspired by Recursive Language Model (RLM) agents, built for multimodal understanding: video, documents, and images. Instead of prompting a model to answer a question, the model writes a Python program that answers it. The program searches transcripts, extracts video clips, samples frames, queries vision models, and iterates, all inside a sandboxed Read Eval Print Loop (REPL).
 
 ## Why the name?
 
@@ -11,17 +9,17 @@ In the *Mahabharata*, Sanjaya narrates events to a blind king with "divine sight
 ## Install
 
 ```bash
-pip install sanjaya
+uv add sanjaya
 ```
 
 With extras:
 
 ```bash
-pip install "sanjaya[video]"      # video analysis
-pip install "sanjaya[image]"      # image analysis (Pillow, HEIC, SVG)
-pip install "sanjaya[document]"   # PDF/EPUB/PPTX/Markdown/text parsing
-pip install "sanjaya[tracing]"    # tracing integrations
-pip install "sanjaya[all]"        # everything
+uv add "sanjaya[video]"      # video analysis
+uv add "sanjaya[image]"      # image analysis (Pillow, HEIC, SVG)
+uv add "sanjaya[document]"   # PDF/EPUB/PPTX/Markdown/text parsing
+uv add "sanjaya[tracing]"    # tracing integrations
+uv add "sanjaya[all]"        # everything
 ```
 
 ## Configuration
@@ -404,76 +402,6 @@ print(f"Input tokens: {answer.input_tokens}")
 print(f"Output tokens: {answer.output_tokens}")
 print(f"Wall time: {answer.wall_time_s}s")
 ```
-
-### Prompt optimization with GEPA
-
-Use [GEPA](https://github.com/gepa-ai/gepa) to evolve prompts against a benchmark:
-
-```python
-from gepa.optimize_anything import optimize_anything, GEPAConfig
-from sanjaya import Agent
-from sanjaya.prompts import PromptConfig
-
-def evaluate(candidate: dict, example: dict) -> tuple[float, dict]:
-    config = PromptConfig.from_dict(candidate)
-    agent = Agent(prompts=config, max_iterations=6)
-    answer = agent.ask(example["question"], video=example["video"])
-    score = 1.0 if example["expected"] in answer.text else 0.0
-    return score, {"answer": answer.text}
-
-seed = PromptConfig(
-    video_strategy="Focus on visual evidence...",
-    critic="Score strictly on accuracy...",
-).to_dict()
-
-result = optimize_anything(
-    seed_candidate=seed,
-    evaluator=evaluate,
-    dataset=train_examples,
-    objective="Maximize accuracy while minimizing cost",
-)
-
-optimized = PromptConfig.from_dict(result.best_candidate)
-```
-
-### Tracing with Logfire
-
-Enable observability with [Logfire](https://pydantic.dev/logfire):
-
-```python
-# Set LOGFIRE_TOKEN in your environment, then:
-agent = Agent(tracing=True)  # tracing=True is the default
-
-# All spans are automatically sent to Logfire:
-# - sanjaya.completion (top-level)
-# - sanjaya.iteration (each loop)
-# - sanjaya.root_llm_call (orchestrator)
-# - sanjaya.sub_llm_call.* (tool LLM calls)
-# - sanjaya.tool_call (tool invocations)
-```
-
-### Resetting agent state
-
-Clear accumulated state between runs:
-
-```python
-agent = Agent()
-
-answer1 = agent.ask("First question", video="/path/to/v1.mp4")
-print(f"Cost so far: ${agent.cost_so_far:.4f}")
-
-# Reset clears budget, history, and workspace
-agent.reset()
-
-answer2 = agent.ask("Second question", video="/path/to/v2.mp4")
-print(f"Cost after reset: ${agent.cost_so_far:.4f}")  # Only includes answer2
-```
-
-## Writing
-
-- **[Building Sanjaya: An RLM Agent That Programs Its Way Through Videos and Images](docs/building-sanjaya.md)** — Lessons, benchmarks, and design decisions from building the library.
-- [RLM Comparison: alexzhang13/rlm vs Sanjaya](docs/rlm-comparison-and-takeaways.md) — Detailed technical comparison with the reference RLM implementation.
-- [Video Understanding Approaches Compared](docs/video-understanding-approaches-compared.md) — Sanjaya vs Gemini vs TwelveLabs (projected cost comparison).
 
 ## Status
 
